@@ -21,6 +21,7 @@
     "@prisma/client": "latest",
     "@radix-ui/react-slot": "latest",
     "@tanstack/react-table": "latest",
+    "@vercel/analytics": "^2.0.1",
     "class-variance-authority": "latest",
     "cloudinary": "^2.10.0",
     "clsx": "latest",
