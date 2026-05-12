@@ -22,6 +22,7 @@
     "@radix-ui/react-slot": "latest",
     "@tanstack/react-table": "latest",
     "@vercel/analytics": "^2.0.1",
+    "@vercel/speed-insights": "^2.0.0",
     "class-variance-authority": "latest",
     "cloudinary": "^2.10.0",
     "clsx": "latest",
