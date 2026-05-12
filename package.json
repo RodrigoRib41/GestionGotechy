@@ -1,0 +1,63 @@
+{
+  "name": "gotechy-hours-platform",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:studio": "prisma studio",
+    "prisma:seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@auth/prisma-adapter": "latest",
+    "@hookform/resolvers": "latest",
+    "@prisma/adapter-pg": "^7.8.0",
+    "@prisma/client": "latest",
+    "@radix-ui/react-slot": "latest",
+    "@tanstack/react-table": "latest",
+    "class-variance-authority": "latest",
+    "cloudinary": "^2.10.0",
+    "clsx": "latest",
+    "date-fns": "latest",
+    "dotenv": "^17.4.2",
+    "exceljs": "^4.4.0",
+    "jspdf": "latest",
+    "jspdf-autotable": "latest",
+    "lucide-react": "latest",
+    "next": "^15.0.0",
+    "next-auth": "beta",
+    "next-themes": "latest",
+    "pg": "^8.20.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-hook-form": "latest",
+    "recharts": "latest",
+    "sonner": "latest",
+    "tailwind-merge": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@netlify/plugin-nextjs": "latest",
+    "@tailwindcss/forms": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "autoprefixer": "latest",
+    "eslint": "latest",
+    "eslint-config-next": "^15.0.0",
+    "postcss": "latest",
+    "prisma": "latest",
+    "tailwindcss": "^3.4.0",
+    "tsx": "latest",
+    "typescript": "latest"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  }
+}

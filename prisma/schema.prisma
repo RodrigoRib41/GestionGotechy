@@ -1,0 +1,333 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  SUPERADMIN
+  ADMINISTRATOR
+  REPORTER
+  COLLABORATOR
+}
+
+enum WorkModality {
+  ONSITE
+  REMOTE
+  HYBRID
+  FLEX
+}
+
+enum CategoryKind {
+  PRODUCTIVE
+  INTERNAL
+  ADMINISTRATIVE
+  TRAINING
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+  PENDING
+}
+
+enum ClientStatus {
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+enum ProjectStatus {
+  ACTIVE
+  PAUSED
+  FINISHED
+  ARCHIVED
+}
+
+enum ProjectType {
+  BASIS
+  DEVELOPMENT
+  MANAGEMENT
+  SUPPORT
+  INTERNAL
+  OTHER
+}
+
+enum TimeEntryStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  DENIED_LOGIN
+  EXPORT
+  ROLE_CHANGE
+  STATUS_CHANGE
+  CONFIG_CHANGE
+}
+
+model User {
+  id            String          @id @default(cuid())
+  name          String?
+  email         String          @unique
+  emailVerified DateTime?
+  image         String?
+  role          Role            @default(COLLABORATOR)
+  status        UserStatus      @default(PENDING)
+  lastLoginAt   DateTime?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  accounts      Account[]
+  sessions      Session[]
+  roles         UserRole[]
+  timeEntries   TimeEntry[]
+  permissions   UserPermission[]
+  projectLinks  ProjectMember[]
+  workSchedule  WorkSchedule?
+  favoriteProjects TimeEntryFavoriteProject[]
+  templates     TimeEntryTemplate[]
+  auditLogs     AuditLog[]      @relation("AuditActor")
+
+  @@index([role])
+  @@index([status])
+}
+
+model UserRole {
+  id        String   @id @default(cuid())
+  role      Role
+  userId    String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, role])
+  @@index([role])
+}
+
+model WorkSchedule {
+  id            String       @id @default(cuid())
+  userId        String       @unique
+  weeklyMinutes Int          @default(2400)
+  dailyMinutes  Int          @default(480)
+  workdays      Int[]        @default([1, 2, 3, 4, 5])
+  modality      WorkModality @default(HYBRID)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Account {
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@id([identifier, token])
+}
+
+model AllowedEmail {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  role        Role     @default(COLLABORATOR)
+  roles       Role[]   @default([COLLABORATOR])
+  displayName String?
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([role])
+}
+
+model Client {
+  id          String       @id @default(cuid())
+  name        String
+  code        String       @unique
+  status      ClientStatus @default(ACTIVE)
+  description String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  projects    Project[]
+  timeEntries TimeEntry[]
+
+  @@index([status])
+}
+
+model Project {
+  id               String          @id @default(cuid())
+  name             String
+  code             String          @unique
+  status           ProjectStatus   @default(ACTIVE)
+  type             ProjectType     @default(OTHER)
+  estimatedMinutes Int             @default(0)
+  description      String?
+  clientId         String
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  client           Client          @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  members          ProjectMember[]
+  timeEntries      TimeEntry[]
+  favoriteLinks    TimeEntryFavoriteProject[]
+  templates        TimeEntryTemplate[]
+
+  @@index([clientId])
+  @@index([status])
+  @@index([type])
+}
+
+model ProjectMember {
+  id        String   @id @default(cuid())
+  userId    String
+  projectId String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, projectId])
+  @@index([projectId])
+}
+
+model Category {
+  id          String      @id @default(cuid())
+  name        String      @unique
+  color       String      @default("#2563EB")
+  kind        CategoryKind @default(PRODUCTIVE)
+  description String?
+  active      Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  timeEntries TimeEntry[]
+  templates   TimeEntryTemplate[]
+
+  @@index([active])
+}
+
+model TimeEntry {
+  id              String          @id @default(cuid())
+  date            DateTime
+  detail          String
+  observations    String?
+  minutes         Int
+  overtimeMinutes Int             @default(0)
+  status          TimeEntryStatus @default(SUBMITTED)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  userId          String
+  projectId       String
+  clientId        String
+  categoryId      String
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project         Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  client          Client          @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  category        Category        @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  @@index([date])
+  @@index([userId, date])
+  @@index([projectId, date])
+  @@index([clientId, date])
+  @@index([categoryId, date])
+  @@index([date, userId])
+  @@index([date, projectId])
+  @@index([date, clientId])
+}
+
+model TimeEntryFavoriteProject {
+  id        String   @id @default(cuid())
+  userId    String
+  projectId String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, projectId])
+  @@index([projectId])
+}
+
+model TimeEntryTemplate {
+  id             String       @id @default(cuid())
+  name           String
+  detail         String
+  observations   String?
+  minutes        Int          @default(60)
+  overtimeMinutes Int         @default(0)
+  active         Boolean      @default(true)
+  userId         String?
+  projectId      String?
+  categoryId     String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  user           User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project        Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  category       Category?    @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([active])
+  @@index([projectId])
+  @@index([categoryId])
+}
+
+model UserPermission {
+  id        String   @id @default(cuid())
+  key       String
+  enabled   Boolean  @default(true)
+  userId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, key])
+}
+
+model AuditLog {
+  id         String      @id @default(cuid())
+  action     AuditAction
+  entity     String
+  entityId   String?
+  metadata   Json?
+  ipAddress  String?
+  userAgent  String?
+  actorId    String?
+  createdAt  DateTime    @default(now())
+  actor      User?       @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([action])
+  @@index([entity])
+  @@index([actorId])
+  @@index([createdAt])
+}
