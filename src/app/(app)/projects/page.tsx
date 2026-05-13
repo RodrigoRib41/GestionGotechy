@@ -13,5 +13,5 @@ export default async function ProjectsPage() {
 
   const data = await getProjectsPageData();
 
-  return <ProjectsClient clients={data.clients} projects={data.projects} />;
+  return <ProjectsClient clients={data.clients} projectTypes={data.projectTypes} projects={data.projects} />;
 }

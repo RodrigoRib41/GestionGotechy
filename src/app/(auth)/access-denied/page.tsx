@@ -2,6 +2,7 @@ import Link from "next/link";
 import { LockKeyhole } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { signOutAction } from "@/lib/actions/auth-actions";
 
 export default function AccessDeniedPage({
   searchParams
@@ -26,9 +27,16 @@ async function AccessDeniedContent({ searchParams }: { searchParams: Promise<{ e
         <p className="mt-3 text-sm leading-6 text-muted-foreground">
           {params.email ? `${params.email} no está en la lista de usuarios autorizados.` : "Tu cuenta no tiene permisos activos para ingresar."}
         </p>
-        <Button asChild className="mt-6 w-full" variant="secondary">
-          <Link href="/login">Volver al ingreso</Link>
-        </Button>
+        <div className="mt-6 grid gap-2">
+          <form action={signOutAction}>
+            <Button className="w-full" type="submit">
+              Cerrar sesion y reintentar
+            </Button>
+          </form>
+          <Button asChild className="w-full" variant="secondary">
+            <Link href="/login">Volver al ingreso</Link>
+          </Button>
+        </div>
       </section>
     </main>
   );

@@ -1,9 +1,19 @@
+import { Role } from "@prisma/client";
+import { redirect } from "next/navigation";
+
+import { auth } from "@/auth";
 import { getDashboardData } from "@/lib/data/dashboard";
 import { DashboardClient } from "@/components/dashboard/dashboard-client";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 export default async function DashboardPage({ searchParams }: { searchParams?: SearchParams }) {
+  const session = await auth();
+
+  if (session?.user.role === Role.COLABORADOR) {
+    redirect("/time");
+  }
+
   const params = (await searchParams) ?? {};
   const data = await getDashboardData({
     preset: valueOf(params.preset),

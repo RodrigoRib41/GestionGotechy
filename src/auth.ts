@@ -1,27 +1,24 @@
 import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
 import { PrismaAdapter } from "@auth/prisma-adapter";
-import { AuditAction, Role, UserStatus } from "@prisma/client";
+import { AuditAction, Role, ThemeVariant, UserStatus } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 
 const DEFAULT_SUPERADMIN_EMAIL = "rodrigorib41@gmail.com";
 const hasDatabase = Boolean(process.env.DATABASE_URL);
-const bootstrapRoles = [Role.SUPERADMIN];
 
 function normalizeEmail(email?: string | null) {
-  return email?.trim().toLowerCase() ?? "";
+  return email?.trim().replace(/^["']|["']$/g, "").toLowerCase() ?? "";
 }
 
 function isBootstrapSuperadmin(email: string) {
-  return normalizeEmail(process.env.SUPERADMIN_EMAIL || DEFAULT_SUPERADMIN_EMAIL) === email;
-}
+  const configuredEmails = (process.env.SUPERADMIN_EMAIL || DEFAULT_SUPERADMIN_EMAIL)
+    .split(/[,\s;]+/)
+    .map((item) => normalizeEmail(item))
+    .filter(Boolean);
 
-function primaryRole(roles: Role[]) {
-  if (roles.includes(Role.SUPERADMIN)) return Role.SUPERADMIN;
-  if (roles.includes(Role.ADMINISTRATOR)) return Role.ADMINISTRATOR;
-  if (roles.includes(Role.REPORTER)) return Role.REPORTER;
-  return Role.COLLABORATOR;
+  return configuredEmails.includes(normalizeEmail(email));
 }
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
@@ -61,15 +58,29 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         }),
         prisma.allowedEmail.findUnique({
           where: { email },
-          select: { role: true, roles: true }
+          select: { role: true }
         })
       ]);
 
-      if (existingUser?.status === UserStatus.DISABLED) {
+      const bootstrapSuperadmin = isBootstrapSuperadmin(email);
+
+      if ((existingUser?.status === UserStatus.DISABLED || existingUser?.status === UserStatus.DELETED) && !bootstrapSuperadmin) {
         return `/access-denied?email=${encodeURIComponent(email)}`;
       }
 
-      const allowed = isBootstrapSuperadmin(email) || allowedEmail || existingUser?.status === UserStatus.ACTIVE;
+      if (existingUser?.status === UserStatus.ARCHIVED && !allowedEmail && !bootstrapSuperadmin) {
+        return `/access-denied?email=${encodeURIComponent(email)}`;
+      }
+
+      if (bootstrapSuperadmin) {
+        await prisma.allowedEmail.upsert({
+          where: { email },
+          update: { role: Role.SUPERADMIN, displayName: "Bootstrap Superadmin" },
+          create: { email, role: Role.SUPERADMIN, displayName: "Bootstrap Superadmin" }
+        });
+      }
+
+      const allowed = bootstrapSuperadmin || allowedEmail || existingUser?.status === UserStatus.ACTIVE;
 
       if (!allowed) {
         await prisma.auditLog.create({
@@ -92,67 +103,79 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       }
 
       if (!hasDatabase) {
-        const roles = isBootstrapSuperadmin(email) ? bootstrapRoles : [Role.COLLABORATOR];
+        const role = isBootstrapSuperadmin(email) ? Role.SUPERADMIN : Role.COLABORADOR;
         token.id = isBootstrapSuperadmin(email) ? "bootstrap-superadmin" : email;
-        token.roles = roles;
-        token.role = primaryRole(roles);
+        token.role = role;
+        token.themeVariant = ThemeVariant.DEFAULT;
         token.status = UserStatus.ACTIVE;
         return token;
       }
 
-      const allowedEmail = await prisma.allowedEmail.findUnique({
-        where: { email },
-        select: { role: true, roles: true }
-      });
+      const [allowedEmail, existingDbUser] = await Promise.all([
+        prisma.allowedEmail.findUnique({
+          where: { email },
+          select: { role: true }
+        }),
+        prisma.user.findUnique({
+          where: { email },
+          select: { id: true, role: true, status: true, themeVariant: true }
+        })
+      ]);
 
-      const desiredRoles = isBootstrapSuperadmin(email)
-        ? bootstrapRoles
-        : allowedEmail?.roles?.length
-          ? allowedEmail.roles
-          : [allowedEmail?.role ?? Role.COLLABORATOR];
-      const role = primaryRole(desiredRoles);
+      if (!user && existingDbUser) {
+        token.id = existingDbUser.id;
+        token.role = isBootstrapSuperadmin(email) ? Role.SUPERADMIN : existingDbUser.role;
+        token.themeVariant = existingDbUser.themeVariant;
+        token.status = existingDbUser.status;
+        return token;
+      }
+
+      const bootstrapSuperadmin = isBootstrapSuperadmin(email);
+      const role = bootstrapSuperadmin
+        ? Role.SUPERADMIN
+        : allowedEmail?.role ?? existingDbUser?.role ?? Role.COLABORADOR;
       const status = UserStatus.ACTIVE;
+      const dbUser = user
+        ? await prisma.user.upsert({
+            where: { email },
+            update: {
+              name: user.name ?? token.name,
+              image: user.image ?? token.picture,
+              role,
+              status,
+              lastLoginAt: new Date()
+            },
+            create: {
+              email,
+              name: user.name ?? token.name,
+              image: user.image ?? token.picture,
+              role,
+              status,
+              lastLoginAt: new Date()
+            },
+            select: { id: true, role: true, status: true, themeVariant: true }
+          })
+        : existingDbUser;
 
-      const dbUser = await prisma.user.upsert({
-        where: { email },
-        update: {
-          name: user?.name ?? token.name,
-          image: user?.image ?? token.picture,
-          role,
-          status,
-          lastLoginAt: new Date()
-        },
-        create: {
-          email,
-          name: user?.name ?? token.name,
-          image: user?.image ?? token.picture,
-          role,
-          status,
-          lastLoginAt: new Date()
-        },
-        select: { id: true, role: true, status: true }
-      });
+      if (!dbUser) {
+        token.id = email;
+        token.role = role;
+        token.themeVariant = ThemeVariant.DEFAULT;
+        token.status = status;
+        return token;
+      }
 
-      await prisma.userRole.createMany({
-        data: desiredRoles.map((userRole) => ({ userId: dbUser.id, role: userRole })),
-        skipDuplicates: true
-      });
-
-      await prisma.workSchedule.upsert({
-        where: { userId: dbUser.id },
-        update: {},
-        create: { userId: dbUser.id }
-      });
-
-      const dbRoles = await prisma.userRole.findMany({
-        where: { userId: dbUser.id },
-        select: { role: true }
-      });
-      const roles = dbRoles.length ? dbRoles.map((item) => item.role) : [dbUser.role];
+      if (user) {
+        await prisma.workSchedule.upsert({
+          where: { userId: dbUser.id },
+          update: {},
+          create: { userId: dbUser.id }
+        });
+      }
 
       token.id = dbUser.id;
-      token.roles = roles;
-      token.role = primaryRole(roles);
+      token.role = dbUser.role;
+      token.themeVariant = dbUser.themeVariant;
       token.status = dbUser.status;
 
       return token;
@@ -161,7 +184,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (session.user) {
         session.user.id = String(token.id);
         session.user.role = token.role as Role;
-        session.user.roles = (token.roles as Role[] | undefined) ?? [token.role as Role];
+        session.user.themeVariant = (token.themeVariant as ThemeVariant | undefined) ?? ThemeVariant.DEFAULT;
         session.user.status = token.status as UserStatus;
       }
 

@@ -6,39 +6,39 @@ export const demoProjects = [
   {
     id: "demo-project-1",
     name: "Comunicacion interna",
-    code: "GOT-COM",
     status: "ACTIVE",
-    type: "INTERNAL",
+    projectType: { id: "type-interno", name: "Interno", monthlyReset: false },
+    usesEstimatedTime: true,
     estimatedMinutes: 2400,
-    client: { id: "demo-client-1", name: "Gotechy Consulting", code: "GOTECHY" },
+    client: { id: "demo-client-1", name: "Gotechy Consulting" },
     consumedMinutes: 1320
   },
   {
     id: "demo-project-2",
-    name: "MSP Basis",
-    code: "MSP-BASIS",
+    name: "Soporte Demo",
     status: "ACTIVE",
-    type: "BASIS",
+    projectType: { id: "type-soporte", name: "Soporte", monthlyReset: true },
+    usesEstimatedTime: true,
     estimatedMinutes: 9600,
-    client: { id: "demo-client-2", name: "MSP", code: "MSP" },
+    client: { id: "demo-client-2", name: "Cliente Demo" },
     consumedMinutes: 5160
   },
   {
     id: "demo-project-3",
-    name: "CARSA Desarrollo",
-    code: "CARSA-DEV",
+    name: "Desarrollo Demo",
     status: "ACTIVE",
-    type: "DEVELOPMENT",
+    projectType: { id: "type-desarrollo", name: "Desarrollo", monthlyReset: false },
+    usesEstimatedTime: true,
     estimatedMinutes: 13200,
-    client: { id: "demo-client-3", name: "CARSA", code: "CARSA" },
+    client: { id: "demo-client-3", name: "Cliente Operativo" },
     consumedMinutes: 7380
   }
 ];
 
 export const demoClients = [
-  { id: "demo-client-1", name: "Gotechy Consulting", code: "GOTECHY", status: "ACTIVE", consumedMinutes: 1320, projects: 1 },
-  { id: "demo-client-2", name: "MSP", code: "MSP", status: "ACTIVE", consumedMinutes: 5160, projects: 1 },
-  { id: "demo-client-3", name: "CARSA", code: "CARSA", status: "ACTIVE", consumedMinutes: 7380, projects: 1 }
+  { id: "demo-client-1", name: "Gotechy Consulting", status: "ACTIVE", consumedMinutes: 1320, projects: 1 },
+  { id: "demo-client-2", name: "Cliente Demo", status: "ACTIVE", consumedMinutes: 5160, projects: 1 },
+  { id: "demo-client-3", name: "Cliente Operativo", status: "ACTIVE", consumedMinutes: 7380, projects: 1 }
 ];
 
 export const demoCategories = [
@@ -68,9 +68,9 @@ export const demoTimeEntries = [
     id: "entry-2",
     date: subDays(new Date(), 1).toISOString(),
     collaborator: "Sofia Peralta",
-    project: "MSP Basis",
+    project: "Soporte Demo",
     projectId: "demo-project-2",
-    client: "MSP",
+    client: "Cliente Demo",
     clientId: "demo-client-2",
     category: "Basis",
     categoryId: "demo-category-1",
@@ -83,9 +83,9 @@ export const demoTimeEntries = [
     id: "entry-3",
     date: subDays(new Date(), 2).toISOString(),
     collaborator: "Marcos Vidal",
-    project: "CARSA Desarrollo",
+    project: "Desarrollo Demo",
     projectId: "demo-project-3",
-    client: "CARSA",
+    client: "Cliente Operativo",
     clientId: "demo-client-3",
     category: "Desarrollo",
     categoryId: "demo-category-2",
@@ -104,15 +104,51 @@ const demoEmployees = [
 ];
 
 const demoClientsAnalytics = [
-  { id: "c3", name: "CARSA", minutes: 7380, overtimeMinutes: 210, entryCount: 16 },
-  { id: "c2", name: "MSP", minutes: 5160, overtimeMinutes: 270, entryCount: 18 },
+  { id: "c3", name: "Cliente Operativo", minutes: 7380, overtimeMinutes: 210, entryCount: 16 },
+  { id: "c2", name: "Cliente Demo", minutes: 5160, overtimeMinutes: 270, entryCount: 18 },
   { id: "c1", name: "Gotechy Consulting", minutes: 1320, overtimeMinutes: 0, entryCount: 6 }
 ];
 
 const demoProjectsAnalytics = [
-  { id: "p3", name: "CARSA Desarrollo", client: "CARSA", status: "ACTIVE", minutes: 7380, overtimeMinutes: 210, entryCount: 16 },
-  { id: "p2", name: "MSP Basis", client: "MSP", status: "ACTIVE", minutes: 5160, overtimeMinutes: 270, entryCount: 18 },
+  { id: "p3", name: "Desarrollo Demo", client: "Cliente Operativo", status: "ACTIVE", minutes: 7380, overtimeMinutes: 210, entryCount: 16 },
+  { id: "p2", name: "Soporte Demo", client: "Cliente Demo", status: "ACTIVE", minutes: 5160, overtimeMinutes: 270, entryCount: 18 },
   { id: "p1", name: "Comunicacion interna", client: "Gotechy Consulting", status: "ACTIVE", minutes: 1320, overtimeMinutes: 0, entryCount: 6 }
+];
+
+const demoEstimatedProgress = [
+  {
+    id: "p2",
+    name: "Soporte Demo",
+    client: "Cliente Demo",
+    type: "Soporte",
+    monthlyReset: true,
+    estimatedMinutes: 9600,
+    consumedMinutes: 5430,
+    remainingMinutes: 4170,
+    percent: 57
+  },
+  {
+    id: "p3",
+    name: "Desarrollo Demo",
+    client: "Cliente Operativo",
+    type: "Desarrollo",
+    monthlyReset: false,
+    estimatedMinutes: 13200,
+    consumedMinutes: 7590,
+    remainingMinutes: 5610,
+    percent: 58
+  },
+  {
+    id: "p1",
+    name: "Comunicacion interna",
+    client: "Gotechy Consulting",
+    type: "Interno",
+    monthlyReset: false,
+    estimatedMinutes: 2400,
+    consumedMinutes: 1320,
+    remainingMinutes: 1080,
+    percent: 55
+  }
 ];
 
 export const demoDashboardData = {
@@ -145,6 +181,7 @@ export const demoDashboardData = {
   hoursByEmployee: demoEmployees,
   hoursByClient: demoClientsAnalytics,
   hoursByProject: demoProjectsAnalytics,
+  estimatedProgress: demoEstimatedProgress,
   overtimeByEmployee: [...demoEmployees].sort((a, b) => b.overtimeMinutes - a.overtimeMinutes),
   employeeRanking: demoEmployees,
   clientRanking: demoClientsAnalytics,

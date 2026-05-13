@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 
 import { auth } from "@/auth";
 import { getReportsData } from "@/lib/data/resources";
-import { canViewGlobalReports } from "@/lib/permissions";
+import { canDeleteTimeHistory, canViewGlobalReports } from "@/lib/permissions";
 import { ReportsClient } from "@/components/reports/reports-client";
 
 export default async function ReportsPage() {
@@ -13,5 +13,5 @@ export default async function ReportsPage() {
 
   const rows = await getReportsData();
 
-  return <ReportsClient rows={rows} />;
+  return <ReportsClient rows={rows} canDeleteHistory={canDeleteTimeHistory(session)} />;
 }

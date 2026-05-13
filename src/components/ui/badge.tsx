@@ -11,6 +11,7 @@ const badgeVariants = cva("inline-flex items-center rounded-md px-2 py-1 text-xs
       outline: "border border-border text-foreground",
       success: "bg-emerald-500/12 text-emerald-700 dark:text-emerald-300",
       warning: "bg-amber-500/14 text-amber-700 dark:text-amber-300",
+      destructive: "bg-destructive/12 text-destructive",
       muted: "bg-muted text-muted-foreground"
     }
   },

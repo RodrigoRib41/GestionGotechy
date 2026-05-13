@@ -1,32 +1,53 @@
 import { demoClients, demoProjects, demoTimeEntries } from "@/lib/demo-data";
 import { prisma } from "@/lib/prisma";
+import { unstable_cache } from "next/cache";
 
 export async function getProjectsPageData() {
   if (!process.env.DATABASE_URL) {
     return {
-      clients: demoClients.map(({ id, name, code, status }) => ({ id, name, code, status })),
+      clients: demoClients.map(({ id, name, status }) => ({ id, name, status })),
+      projectTypes: [
+        { id: "type-soporte", name: "Soporte", active: true, monthlyReset: true },
+        { id: "type-desarrollo", name: "Desarrollo", active: true, monthlyReset: false }
+      ],
       projects: demoProjects.map((project) => ({ ...project, members: ["Equipo Gotechy"] }))
     };
   }
 
   try {
-    const [projects, clients, projectTotals] = await Promise.all([
+    const [projects, clients, projectTypes, projectTotals, monthlyProjectTotals] = await Promise.all([
       prisma.project.findMany({
         select: {
           id: true,
           name: true,
-          code: true,
           status: true,
-          type: true,
+          usesEstimatedTime: true,
           estimatedMinutes: true,
-          client: { select: { id: true, name: true, code: true } },
-          members: { select: { user: { select: { name: true, email: true } } } }
+          description: true,
+          projectType: { select: { id: true, name: true, monthlyReset: true } },
+          projectTypeId: true,
+          client: { select: { id: true, name: true } },
+          members: {
+            where: { user: { status: "ACTIVE" } },
+            select: { user: { select: { name: true, email: true } } }
+          }
         },
         orderBy: { updatedAt: "desc" }
       }),
-      prisma.client.findMany({ orderBy: { name: "asc" } }),
+      prisma.client.findMany({
+        select: { id: true, name: true, status: true },
+        where: { status: "ACTIVE" },
+        orderBy: { name: "asc" }
+      }),
+      prisma.projectType.findMany({ where: { active: true }, select: { id: true, name: true, active: true, monthlyReset: true }, orderBy: { name: "asc" } }),
       prisma.timeEntry.groupBy({
         by: ["projectId"],
+        _sum: { minutes: true, overtimeMinutes: true },
+        _count: { _all: true }
+      }),
+      prisma.timeEntry.groupBy({
+        by: ["projectId"],
+        where: { date: { gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1) } },
         _sum: { minutes: true, overtimeMinutes: true },
         _count: { _all: true }
       })
@@ -40,25 +61,45 @@ export async function getProjectsPageData() {
         }
       ])
     );
+    const monthlyTotalsByProject = new Map(
+      monthlyProjectTotals.map((item) => [
+        item.projectId,
+        {
+          minutes: (item._sum.minutes ?? 0) + (item._sum.overtimeMinutes ?? 0),
+          count: item._count._all
+        }
+      ])
+    );
 
     return {
       clients,
+      projectTypes,
       projects: projects.map((project) => ({
         id: project.id,
         name: project.name,
-        code: project.code,
         status: project.status,
-        type: project.type,
+        projectType: project.projectType,
+        projectTypeId: project.projectTypeId,
+        usesEstimatedTime: project.usesEstimatedTime,
         estimatedMinutes: project.estimatedMinutes,
+        description: project.description,
         client: project.client,
         members: project.members.map((member) => member.user.name ?? member.user.email),
-        consumedMinutes: totalsByProject.get(project.id)?.minutes ?? 0,
-        entryCount: totalsByProject.get(project.id)?.count ?? 0
+        consumedMinutes: project.projectType?.monthlyReset
+          ? monthlyTotalsByProject.get(project.id)?.minutes ?? 0
+          : totalsByProject.get(project.id)?.minutes ?? 0,
+        entryCount: project.projectType?.monthlyReset
+          ? monthlyTotalsByProject.get(project.id)?.count ?? 0
+          : totalsByProject.get(project.id)?.count ?? 0
       }))
     };
   } catch {
     return {
-      clients: demoClients.map(({ id, name, code, status }) => ({ id, name, code, status })),
+      clients: demoClients.map(({ id, name, status }) => ({ id, name, status })),
+      projectTypes: [
+        { id: "type-soporte", name: "Soporte", active: true, monthlyReset: true },
+        { id: "type-desarrollo", name: "Desarrollo", active: true, monthlyReset: false }
+      ],
       projects: demoProjects.map((project) => ({ ...project, members: ["Equipo Gotechy"], entryCount: 0 }))
     };
   }
@@ -75,8 +116,8 @@ export async function getClientsPageData() {
         select: {
           id: true,
           name: true,
-          code: true,
           status: true,
+          description: true,
           projects: { select: { id: true, status: true } }
         },
         orderBy: { name: "asc" }
@@ -100,8 +141,8 @@ export async function getClientsPageData() {
     return clients.map((client) => ({
       id: client.id,
       name: client.name,
-      code: client.code,
       status: client.status,
+      description: client.description,
       projects: client.projects.length,
       activeProjects: client.projects.filter((project) => project.status === "ACTIVE").length,
       consumedMinutes: totalsByClient.get(client.id)?.minutes ?? 0,
@@ -127,6 +168,7 @@ export async function getReportsData() {
 
   try {
     const entries = await prisma.timeEntry.findMany({
+      where: { user: { status: "ACTIVE" } },
       include: {
         user: { select: { id: true, name: true, email: true } },
         project: { select: { id: true, name: true } },
@@ -171,10 +213,12 @@ export async function getAdminData() {
   const demoAdmin = {
     users: [],
     allowedEmails: [
-      { id: "demo-allowed", email: "rodrigorib41@gmail.com", role: "SUPERADMIN", roles: ["SUPERADMIN"], displayName: "Rodrigo" }
+      { id: "demo-allowed", email: "rodrigorib41@gmail.com", role: "SUPERADMIN", displayName: "Rodrigo", status: "ACTIVE" }
     ],
     logs: [],
-    categories: []
+    categories: [],
+    projectTypes: [],
+    databaseState: emptyDatabaseState()
   };
 
   if (!process.env.DATABASE_URL) {
@@ -182,19 +226,21 @@ export async function getAdminData() {
   }
 
   try {
-    const [users, allowedEmails, logs, categories] = await Promise.all([
+    const [users, allowedEmails, logs, categories, projectTypes] = await Promise.all([
       prisma.user.findMany({
-        include: { roles: { select: { role: true } }, workSchedule: true },
+        where: { status: { notIn: ["ARCHIVED", "DELETED"] } },
+        include: { workSchedule: true },
         orderBy: { updatedAt: "desc" },
         take: 50
       }),
-      prisma.allowedEmail.findMany({ orderBy: { createdAt: "desc" } }),
+      prisma.allowedEmail.findMany({ orderBy: { createdAt: "desc" }, take: 200 }),
       prisma.auditLog.findMany({
         include: { actor: { select: { name: true, email: true } } },
         orderBy: { createdAt: "desc" },
-        take: 20
+        take: 100
       }),
-      prisma.category.findMany({ orderBy: { name: "asc" } })
+      prisma.category.findMany({ orderBy: { name: "asc" } }),
+      prisma.projectType.findMany({ orderBy: { name: "asc" } })
     ]);
 
     return {
@@ -203,7 +249,6 @@ export async function getAdminData() {
         name: user.name,
         email: user.email,
         role: user.role,
-        roles: user.roles.map((item) => item.role),
         status: user.status,
         workSchedule: user.workSchedule
           ? {
@@ -219,13 +264,14 @@ export async function getAdminData() {
         id: email.id,
         email: email.email,
         role: email.role,
-        roles: email.roles,
-        displayName: email.displayName
+        displayName: email.displayName,
+        status: "ACTIVE"
       })),
       logs: logs.map((log) => ({
         id: log.id,
         action: log.action,
         entity: log.entity,
+        actorId: log.actorId,
         actor: log.actor?.name ?? log.actor?.email ?? "Sistema",
         createdAt: log.createdAt.toISOString()
       })),
@@ -235,9 +281,84 @@ export async function getAdminData() {
         color: category.color,
         kind: category.kind,
         active: category.active
-      }))
+      })),
+      projectTypes: projectTypes.map((projectType) => ({
+        id: projectType.id,
+        name: projectType.name,
+        description: projectType.description,
+        active: projectType.active,
+        monthlyReset: projectType.monthlyReset
+      })),
+      databaseState: emptyDatabaseState()
     };
   } catch {
     return demoAdmin;
   }
+}
+
+export async function getDatabaseState() {
+  if (!process.env.DATABASE_URL) {
+    return emptyDatabaseState();
+  }
+
+  return unstable_cache(
+    async () => {
+      const quotaMb = Number(process.env.SUPABASE_DB_QUOTA_MB ?? process.env.DATABASE_QUOTA_MB ?? 0);
+      const [{ databaseSize }] = await prisma.$queryRaw<Array<{ databaseSize: bigint }>>`
+        SELECT pg_database_size(current_database())::bigint AS "databaseSize"
+      `;
+      const tableRows = await prisma.$queryRaw<
+        Array<{ tableName: string; totalBytes: bigint; dataBytes: bigint; rowEstimate: bigint }>
+      >`
+        SELECT
+          c.relname AS "tableName",
+          pg_total_relation_size(c.oid)::bigint AS "totalBytes",
+          pg_relation_size(c.oid)::bigint AS "dataBytes",
+          GREATEST(COALESCE(s.n_live_tup, 0), COALESCE(c.reltuples, 0))::bigint AS "rowEstimate"
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        LEFT JOIN pg_stat_user_tables s ON s.relid = c.oid
+        WHERE n.nspname = 'public'
+          AND c.relkind = 'r'
+        ORDER BY pg_total_relation_size(c.oid) DESC
+        LIMIT 14
+      `;
+      const usedBytes = Number(databaseSize ?? BigInt(0));
+      const totalAvailableBytes = quotaMb > 0 ? quotaMb * 1024 * 1024 : null;
+      const percentUsed = totalAvailableBytes ? Math.min(100, Math.round((usedBytes / totalAvailableBytes) * 100)) : null;
+      const totalRecords = tableRows.reduce((sum, table) => sum + Number(table.rowEstimate ?? BigInt(0)), 0);
+      const largestTable = tableRows.at(0);
+
+      return {
+        usedBytes,
+        totalAvailableBytes,
+        percentUsed,
+        totalRecords,
+        largestTable: largestTable?.tableName ?? "Sin datos",
+        health: percentUsed !== null && percentUsed > 85 ? "warning" : "healthy",
+        growthEstimateBytes30d: Math.round(usedBytes * 0.08),
+        tables: tableRows.map((table) => ({
+          name: table.tableName,
+          totalBytes: Number(table.totalBytes ?? BigInt(0)),
+          dataBytes: Number(table.dataBytes ?? BigInt(0)),
+          rowEstimate: Number(table.rowEstimate ?? BigInt(0))
+        }))
+      };
+    },
+    ["admin-database-state-v1"],
+    { revalidate: 600, tags: ["admin-database-state"] }
+  )();
+}
+
+function emptyDatabaseState() {
+  return {
+    usedBytes: 0,
+    totalAvailableBytes: null as number | null,
+    percentUsed: null as number | null,
+    totalRecords: 0,
+    largestTable: "Sin datos",
+    health: "healthy",
+    growthEstimateBytes30d: 0,
+    tables: [] as Array<{ name: string; totalBytes: number; dataBytes: number; rowEstimate: number }>
+  };
 }

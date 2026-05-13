@@ -1,11 +1,13 @@
 "use client";
 
 import { ColumnDef } from "@tanstack/react-table";
-import { Download, FileSpreadsheet, FileText } from "lucide-react";
-import { useMemo, useState } from "react";
+import { AlertTriangle, Download, FileSpreadsheet, FileText, Trash2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 
 import { logReportExport } from "@/lib/actions/resource-actions";
+import { deleteTimeHistory, previewTimeHistoryDelete } from "@/lib/actions/report-actions";
 import { formatMinutes } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -33,7 +35,20 @@ type ReportRow = {
   updatedAt: string;
 };
 
-export function ReportsClient({ rows }: { rows: ReportRow[] }) {
+type DeleteSummary = {
+  count: number;
+  minutes: number;
+  overtimeMinutes: number;
+  collaborators: number;
+  projects: number;
+  label: string;
+  from?: string;
+  to?: string;
+};
+
+export function ReportsClient({ rows, canDeleteHistory = false }: { rows: ReportRow[]; canDeleteHistory?: boolean }) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [client, setClient] = useState("");
@@ -41,6 +56,13 @@ export function ReportsClient({ rows }: { rows: ReportRow[] }) {
   const [collaborator, setCollaborator] = useState("");
   const [category, setCategory] = useState("");
   const [onlyOvertime, setOnlyOvertime] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteMode, setDeleteMode] = useState<"range" | "all">("range");
+  const [deleteFrom, setDeleteFrom] = useState("");
+  const [deleteTo, setDeleteTo] = useState("");
+  const [deletePin, setDeletePin] = useState("");
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [deleteSummary, setDeleteSummary] = useState<DeleteSummary | null>(null);
 
   const filtered = useMemo(() => {
     return rows.filter((row) => {
@@ -117,7 +139,7 @@ export function ReportsClient({ rows }: { rows: ReportRow[] }) {
     for (const [name, entries] of grouped) {
       const worksheet = workbook.addWorksheet(cleanSheetName(name));
       worksheet.mergeCells("A1:F1");
-      worksheet.getCell("A1").value = "Gotechy Consulting - Reporte Maestro de Horas";
+      worksheet.getCell("A1").value = "Gotechy Consulting - Reporte Maestro de Tiempo";
       worksheet.getCell("A1").font = { bold: true, size: 14, color: { argb: "FFFFFFFF" } };
       worksheet.getCell("A1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF111827" } };
       worksheet.addRow([]);
@@ -164,7 +186,7 @@ export function ReportsClient({ rows }: { rows: ReportRow[] }) {
   async function exportPdf() {
     const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
     const doc = new jsPDF({ orientation: "landscape" });
-    doc.text("Gotechy Consulting - Reporte maestro de horas", 14, 14);
+    doc.text("Gotechy Consulting - Reporte maestro de tiempo", 14, 14);
     autoTable(doc, {
       startY: 20,
       head: [["Colaborador", "Fecha", "Cliente", "Proyecto", "Categoria", "Min", "Extra"]],
@@ -183,18 +205,65 @@ export function ReportsClient({ rows }: { rows: ReportRow[] }) {
     toast.success("PDF exportado");
   }
 
+  function openDeleteModal() {
+    setDeleteFrom(from);
+    setDeleteTo(to);
+    setDeleteMode(from && to ? "range" : "all");
+    setDeletePin("");
+    setDeleteConfirmation("");
+    setDeleteSummary(null);
+    setDeleteOpen(true);
+  }
+
+  function previewDelete() {
+    startTransition(async () => {
+      const result = await previewTimeHistoryDelete({ mode: deleteMode, from: deleteFrom, to: deleteTo });
+
+      if (!result.ok) {
+        toast.error(result.message);
+        return;
+      }
+
+      if (result.summary) {
+        setDeleteSummary(result.summary);
+      }
+      toast.success("Resumen listo");
+    });
+  }
+
+  function confirmDelete() {
+    startTransition(async () => {
+      const result = await deleteTimeHistory({
+        mode: deleteMode,
+        from: deleteFrom,
+        to: deleteTo,
+        pin: deletePin,
+        confirmation: deleteConfirmation
+      });
+
+      if (!result.ok) {
+        toast.error(result.message);
+        return;
+      }
+
+      toast.success(result.message);
+      setDeleteOpen(false);
+      router.refresh();
+    });
+  }
+
   return (
     <div className="space-y-6">
       <section className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardContent className="p-5">
-            <p className="text-sm text-muted-foreground">Horas filtradas</p>
+            <p className="text-sm text-muted-foreground">Tiempo filtrado</p>
             <div className="mt-2 text-2xl font-semibold">{formatMinutes(totalMinutes)}</div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-5">
-            <p className="text-sm text-muted-foreground">Horas fuera de horario</p>
+            <p className="text-sm text-muted-foreground">Tiempo fuera de horario</p>
             <div className="mt-2 text-2xl font-semibold">{formatMinutes(totalOvertime)}</div>
           </CardContent>
         </Card>
@@ -209,10 +278,16 @@ export function ReportsClient({ rows }: { rows: ReportRow[] }) {
       <Card>
         <CardHeader className="flex-row flex-wrap items-center justify-between gap-3">
           <div>
-            <CardTitle>Reporte Maestro de Horas</CardTitle>
+            <CardTitle>Reporte Maestro de Tiempo</CardTitle>
             <p className="mt-1 text-sm text-muted-foreground">Todas las cargas con filtros avanzados y exportacion corporativa por colaborador.</p>
           </div>
           <div className="flex flex-wrap gap-2">
+            {canDeleteHistory ? (
+              <Button onClick={openDeleteModal} variant="destructive">
+                <Trash2 className="mr-2 h-4 w-4" />
+                Borrar historial de horas
+              </Button>
+            ) : null}
             <Button onClick={exportCsv} variant="outline">
               <Download className="mr-2 h-4 w-4" />
               CSV
@@ -281,7 +356,7 @@ export function ReportsClient({ rows }: { rows: ReportRow[] }) {
             type="button"
             onClick={() => setOnlyOvertime((value) => !value)}
           >
-            Solo horas fuera de horario
+            Solo tiempo fuera de horario
           </button>
           <div className="flex flex-wrap gap-2">
             {[client, project, collaborator, category].filter(Boolean).map((item) => (
@@ -294,6 +369,96 @@ export function ReportsClient({ rows }: { rows: ReportRow[] }) {
           <DataTable columns={columns} data={filtered} searchPlaceholder="Buscar en reporte maestro" />
         </CardContent>
       </Card>
+      {deleteOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+          <div className="w-full max-w-2xl rounded-lg border bg-card shadow-xl">
+            <div className="flex items-start justify-between gap-4 border-b p-5">
+              <div>
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="h-5 w-5 text-destructive" />
+                  <h2 className="text-lg font-semibold">Borrar historial de horas</h2>
+                </div>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  Esta accion elimina registros de carga horaria y queda auditada. No afecta usuarios, clientes ni proyectos.
+                </p>
+              </div>
+              <Button disabled={isPending} size="sm" variant="ghost" onClick={() => setDeleteOpen(false)}>
+                Cerrar
+              </Button>
+            </div>
+
+            <div className="space-y-4 p-5">
+              <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+                Confirmacion doble requerida: calcula el resumen, ingresa el PIN del servidor y escribi BORRAR.
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-3">
+                <Filter label="Alcance">
+                  <Select value={deleteMode} onChange={(event) => setDeleteMode(event.target.value as "range" | "all")}>
+                    <option value="range">Rango de fechas</option>
+                    <option value="all">Todo el historial</option>
+                  </Select>
+                </Filter>
+                <Filter label="Desde">
+                  <Input disabled={deleteMode === "all"} type="date" value={deleteFrom} onChange={(event) => setDeleteFrom(event.target.value)} />
+                </Filter>
+                <Filter label="Hasta">
+                  <Input disabled={deleteMode === "all"} type="date" value={deleteTo} onChange={(event) => setDeleteTo(event.target.value)} />
+                </Filter>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <Button disabled={isPending} variant="outline" onClick={previewDelete}>
+                  Calcular registros afectados
+                </Button>
+                {deleteSummary ? (
+                  <Badge variant={deleteSummary.count ? "warning" : "success"}>{deleteSummary.count} registros afectados</Badge>
+                ) : null}
+              </div>
+
+              {deleteSummary ? (
+                <div className="grid gap-3 rounded-md border bg-muted/30 p-3 text-sm sm:grid-cols-4">
+                  <SummaryItem label="Alcance" value={deleteSummary.label} />
+                  <SummaryItem label="Tiempo" value={formatMinutes(deleteSummary.minutes)} />
+                  <SummaryItem label="Extra" value={formatMinutes(deleteSummary.overtimeMinutes)} />
+                  <SummaryItem label="Colaboradores" value={String(deleteSummary.collaborators)} />
+                </div>
+              ) : null}
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <Filter label="PIN de seguridad">
+                  <Input autoComplete="off" type="password" value={deletePin} onChange={(event) => setDeletePin(event.target.value)} />
+                </Filter>
+                <Filter label='Confirmacion: escribi "BORRAR"'>
+                  <Input value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} />
+                </Filter>
+              </div>
+
+              <div className="flex flex-wrap justify-end gap-2 border-t pt-4">
+                <Button disabled={isPending} variant="ghost" onClick={() => setDeleteOpen(false)}>
+                  Cancelar
+                </Button>
+                <Button
+                  disabled={isPending || !deleteSummary || deleteSummary.count === 0 || !deletePin || deleteConfirmation.trim().toUpperCase() !== "BORRAR"}
+                  variant="destructive"
+                  onClick={confirmDelete}
+                >
+                  {isPending ? "Procesando..." : "Eliminar historial"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SummaryItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="mt-1 truncate font-semibold">{value}</div>
     </div>
   );
 }

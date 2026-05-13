@@ -18,7 +18,7 @@ export async function getDashboardData(input: DashboardRangeInput = {}) {
   const range = resolveDashboardRange(input);
 
   if (!process.env.DATABASE_URL) {
-    return { ...demoDashboardData, range: serializeRange(range) };
+    return { ...demoDashboardData, range: serializeRange(range), pinnedDashboardIds: [] };
   }
 
   try {
@@ -26,35 +26,59 @@ export async function getDashboardData(input: DashboardRangeInput = {}) {
     const globalScope = canViewGlobalReports(session);
     const scopeUserId = !globalScope && session?.user.id ? session.user.id : undefined;
     const scopeKey = globalScope ? "global" : `user:${scopeUserId ?? "anonymous"}`;
+    const preferenceUserId = session?.user.id;
 
-    const data = await unstable_cache(
-      () => buildDashboardData({ start: range.start, end: range.end, scopeUserId, globalScope }),
-      ["dashboard-data-v4", scopeKey, range.from, range.to],
-      { revalidate: 60, tags: ["dashboard-metrics"] }
-    )();
+    const [data, pinnedDashboardIds] = await Promise.all([
+      unstable_cache(
+        () => buildDashboardData({ start: range.start, end: range.end, scopeUserId, globalScope }),
+        ["dashboard-data-v4", scopeKey, range.from, range.to],
+        { revalidate: 60, tags: ["dashboard-metrics"] }
+      )(),
+      preferenceUserId ? getPinnedDashboardIds(preferenceUserId) : Promise.resolve([])
+    ]);
 
-    return { ...data, range: serializeRange(range) };
+    return { ...data, range: serializeRange(range), pinnedDashboardIds };
   } catch {
-    return { ...demoDashboardData, range: serializeRange(range) };
+    return { ...demoDashboardData, range: serializeRange(range), pinnedDashboardIds: [] };
   }
+}
+
+export async function getPinnedDashboardIds(userId: string) {
+  return unstable_cache(
+    async () => {
+      const rows = await prisma.userDashboardPreference.findMany({
+        where: { userId },
+        select: { dashboardId: true },
+        orderBy: [{ position: "asc" }, { createdAt: "asc" }],
+        take: 6
+      });
+
+      return rows.map((row) => row.dashboardId);
+    },
+    ["dashboard-preferences-v1", userId],
+    { revalidate: 300, tags: [`dashboard-preferences:${userId}`] }
+  )();
 }
 
 async function buildDashboardData({ start, end, scopeUserId, globalScope }: DashboardQuery) {
   const where = {
     date: { gte: start, lte: end },
-    ...(scopeUserId ? { userId: scopeUserId } : {})
+    ...(scopeUserId ? { userId: scopeUserId } : {}),
+    user: { status: "ACTIVE" as const }
   };
   const totalDays = Math.max(1, differenceInCalendarDays(end, start) + 1);
   const previousEnd = subDays(start, 1);
   const previousStart = subDays(start, totalDays);
   const previousWhere = {
     date: { gte: previousStart, lte: previousEnd },
-    ...(scopeUserId ? { userId: scopeUserId } : {})
+    ...(scopeUserId ? { userId: scopeUserId } : {}),
+    user: { status: "ACTIVE" as const }
   };
   const monthHistoryStart = startOfMonth(subMonths(end, 5));
   const historyWhere = {
     date: { gte: monthHistoryStart, lte: end },
-    ...(scopeUserId ? { userId: scopeUserId } : {})
+    ...(scopeUserId ? { userId: scopeUserId } : {}),
+    user: { status: "ACTIVE" as const }
   };
 
   const [
@@ -68,7 +92,10 @@ async function buildDashboardData({ start, end, scopeUserId, globalScope }: Dash
     historyByDate,
     recentActivity,
     activeUsers,
-    todayUsers
+    todayUsers,
+    estimatedProjects,
+    estimatedProjectTotals,
+    estimatedProjectMonthTotals
   ] = await Promise.all([
     prisma.timeEntry.aggregate({
       where,
@@ -134,8 +161,41 @@ async function buildDashboardData({ start, end, scopeUserId, globalScope }: Dash
       by: ["userId"],
       where: {
         date: { gte: new Date(`${format(new Date(), "yyyy-MM-dd")}T00:00:00`), lte: new Date(`${format(new Date(), "yyyy-MM-dd")}T23:59:59`) },
-        ...(scopeUserId ? { userId: scopeUserId } : {})
+        ...(scopeUserId ? { userId: scopeUserId } : {}),
+        user: { status: "ACTIVE" as const }
       }
+    }),
+    prisma.project.findMany({
+      where: { usesEstimatedTime: true, estimatedMinutes: { gt: 0 } },
+      select: {
+        id: true,
+        name: true,
+        estimatedMinutes: true,
+        status: true,
+        client: { select: { name: true } },
+        projectType: { select: { name: true, monthlyReset: true } }
+      },
+      orderBy: { updatedAt: "desc" },
+      take: 50
+    }),
+    prisma.timeEntry.groupBy({
+      by: ["projectId"],
+      where: {
+        ...(scopeUserId ? { userId: scopeUserId } : {}),
+        user: { status: "ACTIVE" as const },
+        project: { usesEstimatedTime: true, estimatedMinutes: { gt: 0 } }
+      },
+      _sum: { minutes: true, overtimeMinutes: true }
+    }),
+    prisma.timeEntry.groupBy({
+      by: ["projectId"],
+      where: {
+        ...(scopeUserId ? { userId: scopeUserId } : {}),
+        user: { status: "ACTIVE" as const },
+        date: { gte: startOfMonth(new Date()) },
+        project: { usesEstimatedTime: true, estimatedMinutes: { gt: 0 } }
+      },
+      _sum: { minutes: true, overtimeMinutes: true }
     })
   ]);
 
@@ -245,6 +305,33 @@ async function buildDashboardData({ start, end, scopeUserId, globalScope }: Dash
   const heatmap = groupHeatmap(daily.slice(-84), maxDailyMinutes);
   const previousDeltaPercent = previousMinutes === 0 ? (totalMinutes > 0 ? 100 : 0) : Math.round(((totalMinutes - previousMinutes) / previousMinutes) * 100);
   const averageDailyMinutes = Math.round(totalMinutes / totalDays);
+  const estimatedTotalsByProject = new Map(
+    estimatedProjectTotals.map((item) => [item.projectId, (item._sum.minutes ?? 0) + (item._sum.overtimeMinutes ?? 0)])
+  );
+  const estimatedMonthTotalsByProject = new Map(
+    estimatedProjectMonthTotals.map((item) => [item.projectId, (item._sum.minutes ?? 0) + (item._sum.overtimeMinutes ?? 0)])
+  );
+  const estimatedProgress = estimatedProjects
+    .map((project) => {
+      const consumedMinutes = project.projectType?.monthlyReset
+        ? estimatedMonthTotalsByProject.get(project.id) ?? 0
+        : estimatedTotalsByProject.get(project.id) ?? 0;
+      const percent = project.estimatedMinutes ? Math.round((consumedMinutes / project.estimatedMinutes) * 100) : 0;
+
+      return {
+        id: project.id,
+        name: project.name,
+        client: project.client.name,
+        status: project.status,
+        type: project.projectType?.name ?? "Sin tipo",
+        monthlyReset: project.projectType?.monthlyReset ?? false,
+        estimatedMinutes: project.estimatedMinutes,
+        consumedMinutes,
+        remainingMinutes: Math.max(0, project.estimatedMinutes - consumedMinutes),
+        percent
+      };
+    })
+    .sort((a, b) => b.percent - a.percent);
 
   return {
     range: serializeRange(resolveDashboardRange({ preset: "custom", from: format(start, "yyyy-MM-dd"), to: format(end, "yyyy-MM-dd") })),
@@ -271,6 +358,7 @@ async function buildDashboardData({ start, end, scopeUserId, globalScope }: Dash
     hoursByEmployee,
     hoursByClient,
     hoursByProject,
+    estimatedProgress,
     overtimeByEmployee: [...hoursByEmployee].sort((a, b) => b.overtimeMinutes - a.overtimeMinutes),
     employeeRanking: hoursByEmployee.slice(0, 10),
     clientRanking: hoursByClient.slice(0, 10),

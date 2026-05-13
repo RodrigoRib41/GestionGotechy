@@ -6,6 +6,7 @@ import { BarChart3, BriefcaseBusiness, Building2, Clock3, TimerReset, UsersRound
 import { useMemo, useState, useTransition } from "react";
 
 import { Badge } from "@/components/ui/badge";
+import { BrandMark } from "@/components/brand/brand-mark";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -31,8 +32,8 @@ const ranges = [
 export function DashboardClient({ data }: { data: DashboardData }) {
   const kpis = useMemo(
     () => [
-      { label: "Total horas", value: formatMinutes(data.metrics.totalMinutes), helper: `${data.metrics.entryCount} registros`, icon: Clock3 },
-      { label: "Horas extra", value: formatMinutes(data.metrics.totalOvertimeMinutes), helper: `${data.metrics.previousDeltaPercent}% vs periodo previo`, icon: TimerReset },
+      { label: "Tiempo total", value: formatMinutes(data.metrics.totalMinutes), helper: `${data.metrics.entryCount} registros`, icon: Clock3 },
+      { label: "Tiempo extra", value: formatMinutes(data.metrics.totalOvertimeMinutes), helper: `${data.metrics.previousDeltaPercent}% vs periodo previo`, icon: TimerReset },
       { label: "Clientes activos", value: String(data.metrics.activeClients), helper: "Con consumo en el periodo", icon: Building2 },
       { label: "Proyectos activos", value: String(data.metrics.activeProjects), helper: `${data.topProjectsActive.length} top activos`, icon: BriefcaseBusiness },
       { label: "Promedio diario", value: formatMinutes(data.metrics.averageDailyMinutes), helper: `${data.metrics.productivity}% productivo`, icon: BarChart3 },
@@ -102,7 +103,8 @@ function PeriodFilters({ range }: { range: DashboardData["range"] }) {
     <section className="flex flex-col gap-3 rounded-lg border bg-card p-3 shadow-sm xl:flex-row xl:items-center xl:justify-between">
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-sm font-semibold">Periodo analitico</h2>
+          <BrandMark compact className="h-8 w-8" />
+          <h2 className="text-sm font-semibold">Periodo del dashboard</h2>
           <Badge variant="outline">{range.label}</Badge>
           {isPending ? <Badge variant="warning">Actualizando</Badge> : null}
         </div>

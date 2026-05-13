@@ -1,6 +1,6 @@
 # Gotechy Consulting - Internal Hours Platform
 
-Aplicación web moderna para reemplazar el Excel manual de registro de horas de Gotechy Consulting.
+Aplicacion web moderna para reemplazar el Excel manual de registro de horas de Gotechy Consulting.
 
 ## Stack
 
@@ -8,39 +8,44 @@ Aplicación web moderna para reemplazar el Excel manual de registro de horas de 
 - TailwindCSS + componentes estilo shadcn/ui
 - Auth.js / NextAuth con Google OAuth
 - Prisma ORM + PostgreSQL, preparado para Supabase
-- Server Actions, Zod, React Hook Form
-- TanStack Table, Recharts, Framer Motion, Lucide Icons
+- Server Actions, Zod y React Hook Form
+- TanStack Table, Recharts y Lucide Icons
 - Exportaciones CSV, Excel y PDF
-- Netlify como deploy inicial
-- Cloudinary configurado para futuras cargas
+- Vercel/Netlify como deploy serverless
 
-## Módulos incluidos
+## Modulos incluidos
 
-- Dashboard ejecutivo con KPIs, rankings, evolución semanal y distribución por categoría
-- Registro rápido de horas con búsqueda de proyecto, favoritos, templates, métricas personales, observaciones y atajo `Ctrl/Cmd + Enter`
-- Gestión inicial de proyectos
-- Gestión inicial de clientes
-- Reporte Maestro de Horas con filtros avanzados y exportación Excel por colaborador
-- Dashboards analíticos
-- Vista de colaboradores con configuración laboral
-- Administración de usuarios habilitados, roles múltiples, categorías, tipos de tarea y auditoría
-- Login Google con whitelist de emails y pantalla de acceso denegado
+- Dashboard ejecutivo con KPIs, rankings, evolucion semanal y distribucion por categoria.
+- Dashboard unificado con dashboards fijados por usuario y activaciones temporales diarias.
+- Registro rapido de horas con favoritos personales, historial agrupado y metricas de disponibilidad.
+- Seguimiento operativo con vistas Kanban/lista/timeline, estados administrables e historial.
+- Objetivos de cumplimiento horario por colaborador, periodo, cliente, proyecto y categoria.
+- Historial persistente de objetivos con limpieza segura por PIN para Superadmin.
+- Gestion de proyectos, clientes, tipos de proyecto y estimaciones.
+- Reporte Maestro de Horas con filtros avanzados, exportacion y borrado seguro para superadmin.
+- Vista de colaboradores con configuracion laboral.
+- Administracion de usuarios habilitados, roles, categorias, tipos de tarea y auditoria.
+- Branding Gotechy integrado con logo responsive, favicon y soporte light/dark.
+- Login Google con whitelist de emails y pantalla de acceso denegado.
 
 ## Roles y reglas
 
-La app implementa RBAC con roles múltiples por usuario:
+La app implementa RBAC con estos roles:
 
-- `COLLABORATOR`: carga y edita solo sus horas, con límite de 30 días hacia atrás.
-- `ADMINISTRATOR`: gestiona clientes y proyectos.
-- `REPORTER`: accede a dashboard global, analítica, KPIs y exportaciones.
-- `SUPERADMIN`: acceso total, usuarios, permisos, configuración y auditoría.
+- `COLABORADOR`: accede solo a carga de horas y edicion permitida de sus registros.
+- `ADMINISTRADOR`: acceso funcional completo a dashboard global, reportes, clientes, proyectos y seguimiento; sin colaboradores, roles, configuraciones criticas ni borrado historico.
+- `SUPERADMIN`: acceso total, usuarios, roles, configuracion, auditoria y borrado seguro del historial.
 
 Reglas relevantes:
 
-- El sistema marca el cumplimiento diario contra una regla mínima del 70%.
+- El usuario principal de la app es el definido en `SUPERADMIN_EMAIL`.
+- El borrado del historial de horas requiere rol `SUPERADMIN`, confirmacion doble y `REPORT_DELETE_PIN` del servidor.
+- El borrado del historial de objetivos requiere rol `SUPERADMIN`, confirmacion doble y `GOAL_HISTORY_DELETE_PIN` o `REPORT_DELETE_PIN`.
+- Al eliminar un mail habilitado, el usuario se archiva logicamente, se revocan sesiones/cuentas y se preservan datos historicos.
 - Un cliente solo se elimina si no tiene horas y no tiene proyectos activos.
 - Un proyecto solo se elimina si nunca tuvo horas registradas.
-- El superadmin configura horas laborales diarias/semanales, modalidad y días laborales por colaborador.
+- Un proyecto inactivo queda fuera de selects operativos pero conserva historico.
+- Los dashboards temporales se limpian localmente al cambiar el dia; los fijados se guardan en base por usuario.
 
 ## Setup local
 
@@ -53,32 +58,48 @@ npm run prisma:seed
 npm run dev
 ```
 
+Variables base:
+
+```env
+AUTH_GOOGLE_ID="..."
+AUTH_GOOGLE_SECRET="..."
+AUTH_SECRET="..."
+NEXTAUTH_URL="http://localhost:3000"
+SUPERADMIN_EMAIL="rodrigorib41@gmail.com"
+REPORT_DELETE_PIN="123456"
+GOAL_HISTORY_DELETE_PIN="123456"
+```
+
+El email definido en `SUPERADMIN_EMAIL` queda habilitado como superadmin aun antes de existir en la base.
+
+## Base de datos
+
 El modelo Prisma incluye:
 
 - `User`, `Account`, `Session`, `VerificationToken`
-- `AllowedEmail`
-- `Client`
-- `Project`
-- `ProjectMember`
+- `AllowedEmail`, `WorkSchedule`
+- `Client`, `Project`, `ProjectType`, `ProjectMember`
 - `Category`
-- `ActivityType`
-- `TimeEntry`
-- `UserPermission`
+- `TimeEntry`, `TimeEntryFavorite`
+- `UserDashboardPreference`
+- `TrackingTask`, `TrackingTaskStatus`, `TrackingTaskHistory`, `TrackingTaskAttachment`
+- `GoalObjective`, `GoalObjectiveExclusion`, `GoalMetric`, `GoalCompliance`
+- `GoalComplianceHistory`
 - `AuditLog`
 
-La migración inicial activa RLS en todas las tablas públicas para un escenario Supabase. La app opera vía servidor Next.js + Prisma, por lo que las reglas de negocio viven en Server Actions y permisos de aplicación.
+Las nuevas tablas publicas tienen RLS habilitado para Supabase. La app opera via servidor Next.js + Prisma, por lo que las reglas de negocio viven en Server Actions, middleware y helpers de permisos.
 
-## Deploy en Netlify
+## Deploy en Vercel/Netlify
 
 1. Crear una base PostgreSQL en Supabase.
 2. Configurar `DATABASE_URL` y `DIRECT_URL` con el connection string de Supabase.
-3. Crear el OAuth Client de Google y cargar la URL de producción:
+3. Crear el OAuth Client de Google y cargar la URL de produccion:
 
 ```text
-https://tu-dominio.netlify.app/api/auth/callback/google
+https://tu-dominio.vercel.app/api/auth/callback/google
 ```
 
-4. En Netlify, configurar variables:
+4. Configurar variables:
 
 ```env
 DATABASE_URL
@@ -87,56 +108,68 @@ AUTH_SECRET
 AUTH_GOOGLE_ID
 AUTH_GOOGLE_SECRET
 AUTH_TRUST_HOST=true
-NEXTAUTH_URL=https://tu-dominio.netlify.app
+NEXTAUTH_URL=https://tu-dominio.vercel.app
 SUPERADMIN_EMAIL
-CLOUDINARY_CLOUD_NAME
-CLOUDINARY_API_KEY
-CLOUDINARY_API_SECRET
+REPORT_DELETE_PIN
 ```
 
-5. Ejecutar migraciones antes del primer deploy productivo:
+5. Ejecutar migraciones y seed productivo antes del primer deploy real:
 
 ```bash
 npm run prisma:migrate
-npm run prisma:seed
+npm run seed-production
 ```
 
-Netlify usa `@netlify/plugin-nextjs` vía `netlify.toml`.
+## Operaciones productivas
+
+Seed minimo sin datos demo:
+
+```bash
+npm run seed-production
+```
+
+Limpieza segura de datos operativos antes de carga real:
+
+```bash
+CONFIRM_RESET_DB="RESET_GOTECHY_DB" npm run reset-db
+```
+
+En PowerShell:
+
+```powershell
+$env:CONFIRM_RESET_DB="RESET_GOTECHY_DB"; npm run reset-db
+```
+
+`reset-db` mantiene estructura, migraciones, configuracion base y el superadmin definido por `SUPERADMIN_EMAIL`; elimina clientes, proyectos, horas, seguimiento, objetivos calculados, favoritos y preferencias operativas.
 
 ## Arquitectura
 
 ```text
 src/app
-  (auth)        pantallas públicas de login y acceso denegado
-  (app)         rutas protegidas por Auth.js
+  (auth)        pantallas publicas de login y acceso denegado
+  (app)         rutas protegidas por Auth.js y middleware RBAC
   api/auth      handler Auth.js
 src/components
   admin         panel administrativo
-  analytics     dashboards visuales
   dashboard     dashboard principal
   data          tablas TanStack
   navigation    shell, sidebar y topbar
+  objectives    objetivos y cumplimiento
   reports       reportes/exportaciones
   resources     clientes y proyectos
-  time          registro rápido de horas
+  time          registro rapido de horas
+  tracking      seguimiento operativo
   ui            componentes shadcn-style
 src/lib
   actions       Server Actions
-  data          consultas y fallback demo
+  data          consultas cacheadas y fallbacks
   validators    esquemas Zod
   permissions   roles y guardas
 prisma
   schema.prisma
   migrations
   seed.ts
+scripts
+  reset-db.mjs
+  seed-production.mjs
 ```
-
-## Próximas ampliaciones recomendadas
-
-- Edición y archivado de clientes/proyectos desde acciones dedicadas
-- Asignación visual de colaboradores a proyectos
-- Políticas RLS específicas si se expone Supabase Data API al frontend
-- Importador del Excel histórico
-- Virtualización de tablas para miles de registros
-- Notificaciones de usuarios sin carga diaria
-- Workflow de aprobación/rechazo de horas

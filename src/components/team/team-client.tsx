@@ -18,17 +18,9 @@ export function TeamClient({ users }: { users: UserRow[] }) {
   const columns: ColumnDef<UserRow>[] = [
     { accessorKey: "name", header: "Colaborador", cell: ({ row }) => row.original.name ?? row.original.email },
     {
-      accessorKey: "roles",
-      header: "Roles",
-      cell: ({ row }) => (
-        <div className="flex flex-wrap gap-1">
-          {(row.original.roles?.length ? row.original.roles : [row.original.role]).map((role) => (
-            <Badge key={role} variant={role === "SUPERADMIN" ? "success" : "muted"}>
-              {role}
-            </Badge>
-          ))}
-        </div>
-      )
+      accessorKey: "role",
+      header: "Rol",
+      cell: ({ row }) => <Badge variant={row.original.role === "SUPERADMIN" ? "success" : "muted"}>{row.original.role}</Badge>
     },
     {
       id: "daily",
