@@ -53,20 +53,6 @@ npm run prisma:seed
 npm run dev
 ```
 
-Crear en Google Cloud un OAuth Client de tipo Web y configurar:
-
-```env
-AUTH_GOOGLE_ID="..."
-AUTH_GOOGLE_SECRET="..."
-AUTH_SECRET="..."
-NEXTAUTH_URL="http://localhost:3000"
-SUPERADMIN_EMAIL="rodrigorib41@gmail.com"
-```
-
-El email definido en `SUPERADMIN_EMAIL` queda habilitado como superadmin aun antes de existir en la base.
-
-## Base de datos
-
 El modelo Prisma incluye:
 
 - `User`, `Account`, `Session`, `VerificationToken`
