@@ -9,11 +9,16 @@ const DEFAULT_SUPERADMIN_EMAIL = "rodrigorib41@gmail.com";
 const hasDatabase = Boolean(process.env.DATABASE_URL);
 
 function normalizeEmail(email?: string | null) {
-  return email?.trim().toLowerCase() ?? "";
+  return email?.trim().replace(/^["']|["']$/g, "").toLowerCase() ?? "";
 }
 
 function isBootstrapSuperadmin(email: string) {
-  return normalizeEmail(process.env.SUPERADMIN_EMAIL || DEFAULT_SUPERADMIN_EMAIL) === email;
+  const configuredEmails = (process.env.SUPERADMIN_EMAIL || DEFAULT_SUPERADMIN_EMAIL)
+    .split(/[,\s;]+/)
+    .map((item) => normalizeEmail(item))
+    .filter(Boolean);
+
+  return configuredEmails.includes(normalizeEmail(email));
 }
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
@@ -57,15 +62,25 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         })
       ]);
 
-      if (existingUser?.status === UserStatus.DISABLED || existingUser?.status === UserStatus.DELETED) {
+      const bootstrapSuperadmin = isBootstrapSuperadmin(email);
+
+      if ((existingUser?.status === UserStatus.DISABLED || existingUser?.status === UserStatus.DELETED) && !bootstrapSuperadmin) {
         return `/access-denied?email=${encodeURIComponent(email)}`;
       }
 
-      if (existingUser?.status === UserStatus.ARCHIVED && !allowedEmail && !isBootstrapSuperadmin(email)) {
+      if (existingUser?.status === UserStatus.ARCHIVED && !allowedEmail && !bootstrapSuperadmin) {
         return `/access-denied?email=${encodeURIComponent(email)}`;
       }
 
-      const allowed = isBootstrapSuperadmin(email) || allowedEmail || existingUser?.status === UserStatus.ACTIVE;
+      if (bootstrapSuperadmin) {
+        await prisma.allowedEmail.upsert({
+          where: { email },
+          update: { role: Role.SUPERADMIN, displayName: "Bootstrap Superadmin" },
+          create: { email, role: Role.SUPERADMIN, displayName: "Bootstrap Superadmin" }
+        });
+      }
+
+      const allowed = bootstrapSuperadmin || allowedEmail || existingUser?.status === UserStatus.ACTIVE;
 
       if (!allowed) {
         await prisma.auditLog.create({
@@ -115,7 +130,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         return token;
       }
 
-      const role = isBootstrapSuperadmin(email)
+      const bootstrapSuperadmin = isBootstrapSuperadmin(email);
+      const role = bootstrapSuperadmin
         ? Role.SUPERADMIN
         : allowedEmail?.role ?? existingDbUser?.role ?? Role.COLABORADOR;
       const status = UserStatus.ACTIVE;

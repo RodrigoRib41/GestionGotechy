@@ -15,7 +15,7 @@ const protectedRoutes: Array<{ prefix: string; allowedRoles: string[] }> = [
 ];
 
 function normalizeEmail(email?: unknown) {
-  return typeof email === "string" ? email.trim().toLowerCase() : "";
+  return typeof email === "string" ? email.trim().replace(/^["']|["']$/g, "").toLowerCase() : "";
 }
 
 function normalizeRole(role?: unknown) {
@@ -41,9 +41,12 @@ function getEffectiveRole(payload: unknown) {
 
   const source = payload as Record<string, unknown>;
   const email = normalizeEmail(source.email);
-  const superadminEmail = normalizeEmail(process.env.SUPERADMIN_EMAIL);
+  const superadminEmails = (process.env.SUPERADMIN_EMAIL ?? "")
+    .split(/[,\s;]+/)
+    .map((item) => normalizeEmail(item))
+    .filter(Boolean);
 
-  if (email && superadminEmail && email === superadminEmail) {
+  if (email && superadminEmails.includes(email)) {
     return "SUPERADMIN";
   }
 
