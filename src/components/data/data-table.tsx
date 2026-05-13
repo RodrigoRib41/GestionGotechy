@@ -15,6 +15,7 @@ import { memo, useDeferredValue, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { BrandMark } from "@/components/brand/brand-mark";
 
 function DataTableInner<TData, TValue>({
   columns,
@@ -67,7 +68,7 @@ function DataTableInner<TData, TValue>({
                           onClick={header.column.getToggleSortingHandler()}
                         >
                           {flexRender(header.column.columnDef.header, header.getContext())}
-                          {header.column.getIsSorted() === "asc" ? "↑" : header.column.getIsSorted() === "desc" ? "↓" : ""}
+                          {header.column.getIsSorted() === "asc" ? "asc" : header.column.getIsSorted() === "desc" ? "desc" : ""}
                         </button>
                       )}
                     </th>
@@ -89,7 +90,10 @@ function DataTableInner<TData, TValue>({
               ) : (
                 <tr>
                   <td className="px-4 py-10 text-center text-muted-foreground" colSpan={columns.length}>
-                    No hay datos para mostrar.
+                    <div className="flex flex-col items-center gap-3">
+                      <BrandMark compact className="h-10 w-10 opacity-80" />
+                      <span>No hay datos para mostrar.</span>
+                    </div>
                   </td>
                 </tr>
               )}

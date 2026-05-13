@@ -12,7 +12,9 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
-    "prisma:seed": "tsx prisma/seed.ts"
+    "prisma:seed": "tsx prisma/seed.ts",
+    "seed-production": "node scripts/seed-production.mjs",
+    "reset-db": "node scripts/reset-db.mjs"
   },
   "dependencies": {
     "@auth/prisma-adapter": "latest",
@@ -21,10 +23,7 @@
     "@prisma/client": "latest",
     "@radix-ui/react-slot": "latest",
     "@tanstack/react-table": "latest",
-    "@vercel/analytics": "^2.0.1",
-    "@vercel/speed-insights": "^2.0.0",
     "class-variance-authority": "latest",
-    "cloudinary": "^2.10.0",
     "clsx": "latest",
     "date-fns": "latest",
     "dotenv": "^17.4.2",

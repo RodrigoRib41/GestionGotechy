@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { CategoryKind, PrismaClient, ProjectType, Role } from "@prisma/client";
+import { CategoryKind, PrismaClient, Role } from "@prisma/client";
 
 const connectionString =
   process.env.DATABASE_URL ?? "postgresql://postgres:postgres@localhost:5432/gotechy_hours?schema=public";
@@ -12,11 +12,10 @@ async function main() {
 
   await prisma.allowedEmail.upsert({
     where: { email: superadminEmail },
-    update: { role: Role.SUPERADMIN, roles: [Role.SUPERADMIN], displayName: "Gotechy Superadmin" },
+    update: { role: Role.SUPERADMIN, displayName: "Gotechy Superadmin" },
     create: {
       email: superadminEmail,
       role: Role.SUPERADMIN,
-      roles: [Role.SUPERADMIN],
       displayName: "Gotechy Superadmin"
     }
   });
@@ -24,25 +23,54 @@ async function main() {
   const superadmin = await prisma.user.findUnique({ where: { email: superadminEmail } });
 
   if (superadmin) {
-    await prisma.userRole.upsert({
-      where: { userId_role: { userId: superadmin.id, role: Role.SUPERADMIN } },
-      update: {},
-      create: { userId: superadmin.id, role: Role.SUPERADMIN }
+    await prisma.user.update({ where: { id: superadmin.id }, data: { role: Role.SUPERADMIN, status: "ACTIVE" } });
+  }
+
+  const projectTypes = [
+    { name: "Soporte", description: "Bolsa mensual de horas disponible por cliente o proyecto.", monthlyReset: true },
+    { name: "Implementacion", description: "Proyectos con alcance inicial definido.", monthlyReset: false },
+    { name: "Evolutivo", description: "Mejoras continuas y nuevas funcionalidades.", monthlyReset: false },
+    { name: "Correctivo", description: "Correcciones y mantenimiento puntual.", monthlyReset: false },
+    { name: "Consultoria", description: "Acompanamiento tecnico o funcional.", monthlyReset: false },
+    { name: "Basis", description: "Administracion tecnica recurrente.", monthlyReset: false },
+    { name: "Desarrollo", description: "Construccion de software a medida.", monthlyReset: false },
+    { name: "Interno", description: "Trabajo interno no facturable.", monthlyReset: false }
+  ];
+
+  for (const type of projectTypes) {
+    await prisma.projectType.upsert({
+      where: { name: type.name },
+      update: { ...type, active: true },
+      create: { ...type, active: true }
     });
   }
 
-  const clients = [
-    { name: "Gotechy Consulting", code: "GOTECHY" },
-    { name: "MSP", code: "MSP" },
-    { name: "CARSA", code: "CARSA" }
+  const trackingStatuses = [
+    { name: "Pendiente", color: "#64748B", sortOrder: 10, isFinal: false, isBlocked: false },
+    { name: "En progreso", color: "#2563EB", sortOrder: 20, isFinal: false, isBlocked: false },
+    { name: "Bloqueado", color: "#F97316", sortOrder: 30, isFinal: false, isBlocked: true },
+    { name: "En revision", color: "#8B5CF6", sortOrder: 40, isFinal: false, isBlocked: false },
+    { name: "Finalizado", color: "#16A34A", sortOrder: 50, isFinal: true, isBlocked: false },
+    { name: "Cancelado", color: "#EF4444", sortOrder: 60, isFinal: true, isBlocked: false }
   ];
 
-  for (const client of clients) {
-    await prisma.client.upsert({
-      where: { code: client.code },
-      update: { name: client.name },
-      create: client
+  for (const status of trackingStatuses) {
+    await prisma.trackingTaskStatus.upsert({
+      where: { name: status.name },
+      update: { ...status, active: true },
+      create: { ...status, active: true }
     });
+  }
+
+  const clients = ["Gotechy Consulting", "Cliente Demo", "Cliente Operativo"];
+
+  for (const name of clients) {
+    const existing = await prisma.client.findFirst({ where: { name } });
+    if (existing) {
+      await prisma.client.update({ where: { id: existing.id }, data: { name } });
+    } else {
+      await prisma.client.create({ data: { name } });
+    }
   }
 
   const categories = [
@@ -64,64 +92,66 @@ async function main() {
     });
   }
 
-  const gotechy = await prisma.client.findUniqueOrThrow({ where: { code: "GOTECHY" } });
-  const msp = await prisma.client.findUniqueOrThrow({ where: { code: "MSP" } });
-  const carsa = await prisma.client.findUniqueOrThrow({ where: { code: "CARSA" } });
+  const gotechy = await prisma.client.findFirstOrThrow({ where: { name: "Gotechy Consulting" } });
+  const clienteDemo = await prisma.client.findFirstOrThrow({ where: { name: "Cliente Demo" } });
+  const clienteOperativo = await prisma.client.findFirstOrThrow({ where: { name: "Cliente Operativo" } });
+  const interno = await prisma.projectType.findUniqueOrThrow({ where: { name: "Interno" } });
+  const soporte = await prisma.projectType.findUniqueOrThrow({ where: { name: "Soporte" } });
+  const desarrollo = await prisma.projectType.findUniqueOrThrow({ where: { name: "Desarrollo" } });
 
   const projects = [
     {
       name: "Comunicacion interna",
-      code: "GOT-COM",
       clientId: gotechy.id,
-      type: ProjectType.INTERNAL,
+      projectTypeId: interno.id,
+      usesEstimatedTime: true,
       estimatedMinutes: 40 * 60
     },
     {
-      name: "MSP Basis",
-      code: "MSP-BASIS",
-      clientId: msp.id,
-      type: ProjectType.BASIS,
+      name: "Soporte Demo",
+      clientId: clienteDemo.id,
+      projectTypeId: soporte.id,
+      usesEstimatedTime: true,
       estimatedMinutes: 160 * 60
     },
     {
-      name: "CARSA Desarrollo",
-      code: "CARSA-DEV",
-      clientId: carsa.id,
-      type: ProjectType.DEVELOPMENT,
+      name: "Desarrollo Demo",
+      clientId: clienteOperativo.id,
+      projectTypeId: desarrollo.id,
+      usesEstimatedTime: true,
       estimatedMinutes: 220 * 60
     }
   ];
 
   for (const project of projects) {
-    await prisma.project.upsert({
-      where: { code: project.code },
-      update: project,
-      create: project
-    });
+    const existing = await prisma.project.findFirst({ where: { name: project.name, clientId: project.clientId } });
+    if (existing) {
+      await prisma.project.update({ where: { id: existing.id }, data: project });
+    } else {
+      await prisma.project.create({ data: project });
+    }
   }
 
-  const basis = await prisma.category.findUnique({ where: { name: "Basis" } });
-  const mspBasis = await prisma.project.findUnique({ where: { code: "MSP-BASIS" } });
+  const defaultGoal = await prisma.goalObjective.findFirst({
+    where: { name: "Mantener 60% del total esperado", metricKind: "MIN_EXPECTED_PERCENT", period: "WEEKLY" },
+    select: { id: true }
+  });
+  const goalData = {
+    name: "Mantener 60% del total esperado",
+    description: "Todos los dias laborales deben tener al menos 50% registrado.",
+    metricKind: "MIN_EXPECTED_PERCENT" as const,
+    period: "WEEKLY" as const,
+    targetPercent: 60,
+    minDailyPercent: 50,
+    tolerancePercent: 0,
+    active: true,
+    global: true
+  };
 
-  if (basis && mspBasis) {
-    await prisma.timeEntryTemplate.upsert({
-      where: { id: "template-soporte-basis" },
-      update: {
-        name: "Soporte Basis",
-        detail: "Seguimiento operativo y resolucion de incidentes",
-        projectId: mspBasis.id,
-        categoryId: basis.id,
-        active: true
-      },
-      create: {
-        id: "template-soporte-basis",
-        name: "Soporte Basis",
-        detail: "Seguimiento operativo y resolucion de incidentes",
-        minutes: 60,
-        projectId: mspBasis.id,
-        categoryId: basis.id
-      }
-    });
+  if (defaultGoal) {
+    await prisma.goalObjective.update({ where: { id: defaultGoal.id }, data: goalData });
+  } else {
+    await prisma.goalObjective.create({ data: goalData });
   }
 }
 

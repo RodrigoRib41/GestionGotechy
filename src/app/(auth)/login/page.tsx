@@ -1,6 +1,7 @@
 import { ArrowRight, ShieldCheck } from "lucide-react";
 
 import { signInWithGoogle } from "@/lib/actions/auth-actions";
+import { BrandMark } from "@/components/brand/brand-mark";
 import { Button } from "@/components/ui/button";
 
 export default function LoginPage() {
@@ -9,15 +10,18 @@ export default function LoginPage() {
       <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-6xl items-center">
         <section className="grid w-full gap-10 lg:grid-cols-[1fr_430px] lg:items-center">
           <div className="max-w-2xl">
+            <div className="mb-8">
+              <BrandMark priority />
+            </div>
             <div className="mb-8 inline-flex items-center gap-2 rounded-full border border-teal-500/20 bg-white/70 px-3 py-1 text-sm font-medium text-teal-700 shadow-sm backdrop-blur dark:bg-white/5 dark:text-teal-200">
               <ShieldCheck className="h-4 w-4" />
-              Gotechy Consulting
+              Acceso privado
             </div>
             <h1 className="text-balance text-4xl font-semibold tracking-normal text-slate-950 dark:text-white sm:text-5xl">
-              Gestión interna de horas con la velocidad de un producto SaaS moderno.
+              Gestion interna de horas con la velocidad de un producto SaaS moderno.
             </h1>
             <p className="mt-5 max-w-xl text-base leading-7 text-slate-600 dark:text-slate-300">
-              Registro rápido, dashboards ejecutivos y control operativo en un único lugar seguro para el equipo.
+              Registro rapido, dashboards ejecutivos y control operativo en un unico lugar seguro para el equipo.
             </p>
             <div className="mt-9 grid max-w-lg grid-cols-3 gap-3 text-sm">
               {["Horas", "Proyectos", "KPIs"].map((item) => (
@@ -31,7 +35,10 @@ export default function LoginPage() {
 
           <div className="glass-panel rounded-xl p-6">
             <div className="mb-8">
-              <p className="text-sm font-medium text-muted-foreground">Acceso privado</p>
+              <div className="mb-4">
+                <BrandMark compact priority />
+              </div>
+              <p className="text-sm font-medium text-muted-foreground">Gotechy Consulting</p>
               <h2 className="mt-2 text-2xl font-semibold tracking-normal">Ingresar con Google</h2>
               <p className="mt-2 text-sm leading-6 text-muted-foreground">
                 Solo pueden acceder cuentas previamente habilitadas por un superadmin.
@@ -44,7 +51,7 @@ export default function LoginPage() {
               </Button>
             </form>
             <div className="mt-6 rounded-lg border bg-muted/40 p-4 text-sm text-muted-foreground">
-              La autorización se valida en servidor antes de crear la sesión.
+              La autorizacion se valida en servidor antes de crear la sesion.
             </div>
           </div>
         </section>

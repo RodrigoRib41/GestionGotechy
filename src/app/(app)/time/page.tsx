@@ -8,7 +8,7 @@ import { QuickTimeEntry } from "@/components/time/quick-time-entry";
 
 export default async function TimePage() {
   const session = await auth();
-  if (!hasRole(session, [Role.COLLABORATOR])) {
+  if (!hasRole(session, [Role.COLABORADOR, Role.ADMINISTRADOR])) {
     redirect("/");
   }
 

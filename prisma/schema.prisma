@@ -8,9 +8,15 @@ datasource db {
 
 enum Role {
   SUPERADMIN
-  ADMINISTRATOR
-  REPORTER
-  COLLABORATOR
+  ADMINISTRADOR
+  COLABORADOR
+}
+
+enum ThemeVariant {
+  DEFAULT
+  MIDNIGHT
+  EMERALD
+  CORPORATE
 }
 
 enum WorkModality {
@@ -31,6 +37,8 @@ enum UserStatus {
   ACTIVE
   DISABLED
   PENDING
+  ARCHIVED
+  DELETED
 }
 
 enum ClientStatus {
@@ -41,18 +49,7 @@ enum ClientStatus {
 
 enum ProjectStatus {
   ACTIVE
-  PAUSED
-  FINISHED
-  ARCHIVED
-}
-
-enum ProjectType {
-  BASIS
-  DEVELOPMENT
-  MANAGEMENT
-  SUPPORT
-  INTERNAL
-  OTHER
+  INACTIVE
 }
 
 enum TimeEntryStatus {
@@ -60,6 +57,24 @@ enum TimeEntryStatus {
   SUBMITTED
   APPROVED
   REJECTED
+}
+
+enum TrackingTaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TrackingHistoryAction {
+  CREATE
+  UPDATE
+  STATUS_CHANGE
+  ASSIGNEE_CHANGE
+  COMMENT
+  TIME_LOGGED
+  CLOSE
+  REOPEN
 }
 
 enum AuditAction {
@@ -74,41 +89,69 @@ enum AuditAction {
   CONFIG_CHANGE
 }
 
+enum GoalPeriod {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+enum GoalHistoryFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+enum GoalMetricKind {
+  MIN_EXPECTED_PERCENT
+  DAILY_MIN_PERCENT
+  MIN_WEEKLY_MINUTES
+  MAX_OVERTIME_MINUTES
+  MIN_ACTIVE_DAYS
+  PRIORITY_PROJECT_PERCENT
+  PRODUCTIVE_PERCENT
+  REDUCE_INTERNAL_MINUTES
+  AVG_ENTRY_DELAY_MINUTES
+  CLIENT_MINUTES
+  CATEGORY_MINUTES
+}
+
 model User {
   id            String          @id @default(cuid())
   name          String?
   email         String          @unique
   emailVerified DateTime?
   image         String?
-  role          Role            @default(COLLABORATOR)
+  role          Role            @default(COLABORADOR)
   status        UserStatus      @default(PENDING)
+  themeVariant  ThemeVariant    @default(DEFAULT)
   lastLoginAt   DateTime?
+  archivedAt    DateTime?
+  deletedAt     DateTime?
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
   accounts      Account[]
   sessions      Session[]
-  roles         UserRole[]
   timeEntries   TimeEntry[]
-  permissions   UserPermission[]
   projectLinks  ProjectMember[]
   workSchedule  WorkSchedule?
-  favoriteProjects TimeEntryFavoriteProject[]
-  templates     TimeEntryTemplate[]
+  favorites     TimeEntryFavorite[]
+  assignedTrackingTasks TrackingTask[] @relation("TrackingTaskAssignee")
+  createdTrackingTasks  TrackingTask[] @relation("TrackingTaskCreator")
+  trackingHistory       TrackingTaskHistory[]
+  trackingAttachments   TrackingTaskAttachment[]
+  dashboardPreferences  UserDashboardPreference[]
+  ownedGoals            GoalObjective[] @relation("GoalOwner")
+  goalExclusions        GoalObjectiveExclusion[]
+  goalMetrics           GoalMetric[]
+  goalCompliances       GoalCompliance[]
+  goalHistory           GoalComplianceHistory[]
+  goalCheckpoints       GoalCheckpoint[]
   auditLogs     AuditLog[]      @relation("AuditActor")
 
   @@index([role])
   @@index([status])
-}
-
-model UserRole {
-  id        String   @id @default(cuid())
-  role      Role
-  userId    String
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, role])
-  @@index([role])
+  @@index([status, role])
+  @@index([themeVariant])
 }
 
 model WorkSchedule {
@@ -165,8 +208,7 @@ model VerificationToken {
 model AllowedEmail {
   id          String   @id @default(cuid())
   email       String   @unique
-  role        Role     @default(COLLABORATOR)
-  roles       Role[]   @default([COLLABORATOR])
+  role        Role     @default(COLABORADOR)
   displayName String?
   notes       String?
   createdAt   DateTime @default(now())
@@ -178,13 +220,14 @@ model AllowedEmail {
 model Client {
   id          String       @id @default(cuid())
   name        String
-  code        String       @unique
   status      ClientStatus @default(ACTIVE)
   description String?
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
   projects    Project[]
   timeEntries TimeEntry[]
+  trackingTasks TrackingTask[]
+  goals       GoalObjective[]
 
   @@index([status])
 }
@@ -192,23 +235,39 @@ model Client {
 model Project {
   id               String          @id @default(cuid())
   name             String
-  code             String          @unique
   status           ProjectStatus   @default(ACTIVE)
-  type             ProjectType     @default(OTHER)
+  usesEstimatedTime Boolean        @default(false)
   estimatedMinutes Int             @default(0)
   description      String?
   clientId         String
+  projectTypeId    String?
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
   client           Client          @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  projectType      ProjectType?    @relation(fields: [projectTypeId], references: [id], onDelete: SetNull)
   members          ProjectMember[]
   timeEntries      TimeEntry[]
-  favoriteLinks    TimeEntryFavoriteProject[]
-  templates        TimeEntryTemplate[]
+  favorites        TimeEntryFavorite[]
+  trackingTasks    TrackingTask[]
+  goals            GoalObjective[]
 
   @@index([clientId])
   @@index([status])
-  @@index([type])
+  @@index([projectTypeId])
+}
+
+model ProjectType {
+  id           String    @id @default(cuid())
+  name         String    @unique
+  description  String?
+  active       Boolean   @default(true)
+  monthlyReset Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  projects     Project[]
+
+  @@index([active])
+  @@index([monthlyReset])
 }
 
 model ProjectMember {
@@ -233,7 +292,8 @@ model Category {
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
   timeEntries TimeEntry[]
-  templates   TimeEntryTemplate[]
+  favorites   TimeEntryFavorite[]
+  goals       GoalObjective[]
 
   @@index([active])
 }
@@ -267,51 +327,283 @@ model TimeEntry {
   @@index([date, clientId])
 }
 
-model TimeEntryFavoriteProject {
-  id        String   @id @default(cuid())
-  userId    String
-  projectId String
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, projectId])
-  @@index([projectId])
-}
-
-model TimeEntryTemplate {
+model TimeEntryFavorite {
   id             String       @id @default(cuid())
   name           String
   detail         String
   observations   String?
-  minutes        Int          @default(60)
+  minutes        Int          @default(30)
   overtimeMinutes Int         @default(0)
-  active         Boolean      @default(true)
-  userId         String?
-  projectId      String?
-  categoryId     String?
+  userId         String
+  projectId      String
+  categoryId     String
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
-  user           User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  project        Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  category       Category?    @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project        Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  category       Category     @relation(fields: [categoryId], references: [id], onDelete: Cascade)
 
   @@index([userId])
-  @@index([active])
+  @@index([projectId])
+  @@index([categoryId])
+  @@unique([userId, projectId, categoryId, detail, minutes, overtimeMinutes])
+}
+
+model UserDashboardPreference {
+  id          String   @id @default(cuid())
+  userId      String
+  dashboardId String
+  position    Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, dashboardId])
+  @@index([userId, position])
+}
+
+model GoalObjective {
+  id               String                   @id @default(cuid())
+  name             String
+  description      String?
+  metricKind       GoalMetricKind
+  period           GoalPeriod               @default(WEEKLY)
+  targetPercent    Float?
+  targetMinutes    Int?
+  tolerancePercent Float                    @default(0)
+  minDailyPercent  Float?
+  active           Boolean                  @default(true)
+  global           Boolean                  @default(true)
+  exceptions       Json?
+  ownerId          String?
+  clientId         String?
+  projectId        String?
+  categoryId       String?
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+  owner            User?                    @relation("GoalOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  client           Client?                  @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  project          Project?                 @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  category         Category?                @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  excludedUsers    GoalObjectiveExclusion[]
+  metrics          GoalMetric[]
+  compliances      GoalCompliance[]
+  history          GoalComplianceHistory[]
+
+  @@index([active, global])
+  @@index([period, metricKind])
+  @@index([ownerId])
+  @@index([clientId])
   @@index([projectId])
   @@index([categoryId])
 }
 
-model UserPermission {
-  id        String   @id @default(cuid())
-  key       String
-  enabled   Boolean  @default(true)
+model GoalObjectiveExclusion {
+  id        String        @id @default(cuid())
+  goalId    String
   userId    String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime      @default(now())
+  goal      GoalObjective @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, key])
+  @@unique([goalId, userId])
+  @@index([userId])
+}
+
+model GoalMetric {
+  id                String        @id @default(cuid())
+  goalId            String
+  userId            String
+  periodStart       DateTime
+  periodEnd         DateTime
+  expectedMinutes   Int           @default(0)
+  actualMinutes     Int           @default(0)
+  overtimeMinutes   Int           @default(0)
+  activeDays        Int           @default(0)
+  productiveMinutes Int           @default(0)
+  internalMinutes   Int           @default(0)
+  entryDelayMinutes Int?
+  raw               Json?
+  createdAt         DateTime      @default(now())
+  goal              GoalObjective @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  user              User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([goalId, userId, periodStart, periodEnd])
+  @@index([userId, periodStart])
+  @@index([goalId, periodStart])
+}
+
+model GoalCompliance {
+  id          String        @id @default(cuid())
+  goalId      String
+  userId      String
+  periodStart DateTime
+  periodEnd   DateTime
+  percent     Float         @default(0)
+  met         Boolean       @default(false)
+  reason      String?
+  createdAt   DateTime      @default(now())
+  goal        GoalObjective @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([goalId, userId, periodStart, periodEnd])
+  @@index([userId, periodStart])
+  @@index([met, periodStart])
+}
+
+model GoalComplianceHistory {
+  id              String         @id @default(cuid())
+  snapshotKey     String         @unique
+  goalId          String?
+  userId          String?
+  goalName        String
+  userName        String
+  metricKind      GoalMetricKind
+  period          GoalPeriod
+  periodStart     DateTime
+  periodEnd       DateTime
+  percent         Float          @default(0)
+  met             Boolean        @default(false)
+  reason          String?
+  expectedMinutes Int            @default(0)
+  actualMinutes   Int            @default(0)
+  overtimeMinutes Int            @default(0)
+  activeDays      Int            @default(0)
+  raw             Json?
+  calculatedAt    DateTime       @default(now())
+  goal            GoalObjective? @relation(fields: [goalId], references: [id], onDelete: SetNull)
+  user            User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([period, periodStart])
+  @@index([userId, periodStart])
+  @@index([goalId, periodStart])
+  @@index([met, periodStart])
+  @@index([calculatedAt])
+}
+
+model GoalHistorySetting {
+  id        String               @id @default(cuid())
+  frequency GoalHistoryFrequency @unique
+  enabled   Boolean              @default(true)
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+
+  @@index([enabled])
+}
+
+model GoalCheckpoint {
+  id              String     @id @default(cuid())
+  checkpointKey   String     @unique
+  userId          String?
+  userName        String
+  period          GoalPeriod @default(WEEKLY)
+  periodStart     DateTime
+  periodEnd       DateTime
+  percent         Float      @default(0)
+  met             Boolean    @default(false)
+  expectedMinutes Int        @default(0)
+  actualMinutes   Int        @default(0)
+  reachedGoals    Int        @default(0)
+  missedGoals     Int        @default(0)
+  trend           String?
+  summary         String
+  raw             Json?
+  createdAt       DateTime   @default(now())
+  user            User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([period, periodStart])
+  @@index([userId, periodStart])
+  @@index([met, periodStart])
+  @@index([createdAt])
+}
+
+model TrackingTaskStatus {
+  id          String         @id @default(cuid())
+  name        String         @unique
+  color       String         @default("#64748B")
+  active      Boolean        @default(true)
+  sortOrder   Int            @default(0)
+  isFinal     Boolean        @default(false)
+  isBlocked   Boolean        @default(false)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  tasks       TrackingTask[]
+
+  @@index([active, sortOrder])
+  @@index([isFinal])
+  @@index([isBlocked])
+}
+
+model TrackingTask {
+  id               String               @id @default(cuid())
+  title            String
+  description      String
+  priority         TrackingTaskPriority @default(MEDIUM)
+  dueDate          DateTime?
+  estimatedMinutes Int                  @default(0)
+  consumedMinutes  Int                  @default(0)
+  tags             String[]             @default([])
+  attachmentMeta   Json?
+  closedAt         DateTime?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  clientId         String
+  projectId        String
+  assigneeId       String
+  createdById      String?
+  statusId         String
+  client           Client               @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  project          Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  assignee         User                 @relation("TrackingTaskAssignee", fields: [assigneeId], references: [id], onDelete: Restrict)
+  createdBy        User?                @relation("TrackingTaskCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  status           TrackingTaskStatus   @relation(fields: [statusId], references: [id], onDelete: Restrict)
+  history          TrackingTaskHistory[]
+  attachments      TrackingTaskAttachment[]
+
+  @@index([assigneeId, statusId])
+  @@index([clientId, projectId])
+  @@index([statusId, updatedAt])
+  @@index([priority])
+  @@index([dueDate])
+  @@index([createdAt])
+  @@index([updatedAt])
+}
+
+model TrackingTaskHistory {
+  id        String                @id @default(cuid())
+  action    TrackingHistoryAction
+  message   String?
+  fromValue Json?
+  toValue   Json?
+  minutes   Int?
+  createdAt DateTime              @default(now())
+  taskId    String
+  actorId   String?
+  task      TrackingTask          @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  actor     User?                 @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([taskId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([action])
+}
+
+model TrackingTaskAttachment {
+  id          String       @id @default(cuid())
+  fileName    String
+  mimeType    String?
+  sizeBytes   Int          @default(0)
+  url         String?
+  storageKey  String?
+  active      Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  taskId      String
+  createdById String?
+  task        TrackingTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  createdBy   User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([taskId])
+  @@index([createdById])
+  @@index([active])
 }
 
 model AuditLog {

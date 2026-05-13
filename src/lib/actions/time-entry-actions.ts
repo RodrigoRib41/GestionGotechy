@@ -1,17 +1,18 @@
 "use server";
 
-import { AuditAction } from "@prisma/client";
+import { AuditAction, ProjectStatus } from "@prisma/client";
 import { differenceInCalendarDays } from "date-fns";
 import { revalidateTag } from "next/cache";
 
 import { prisma } from "@/lib/prisma";
 import { isSuperadmin, requireSession } from "@/lib/permissions";
 import { assertRateLimit } from "@/lib/rate-limit";
-import { timeEntryPatchSchema, timeEntrySchema } from "@/lib/validators";
+import { timeEntryFavoriteSchema, timeEntryPatchSchema, timeEntrySchema } from "@/lib/validators";
 
 function revalidateTimeSurfaces() {
   revalidateTag("dashboard-metrics");
   revalidateTag("time-entry-context");
+  revalidateTag("objectives-dashboard");
 }
 
 type SerializedEntry = {
@@ -30,6 +31,20 @@ type SerializedEntry = {
   overtimeMinutes: number;
 };
 
+type SerializedFavorite = {
+  id: string;
+  name: string;
+  projectId: string;
+  categoryId: string;
+  detail: string;
+  observations?: string | null;
+  minutes: number;
+  overtimeMinutes: number;
+  project: string;
+  client: string;
+  category: string;
+};
+
 export async function createTimeEntry(input: unknown): Promise<
   | { ok: true; message: string; entry: SerializedEntry }
   | { ok: false; message: string }
@@ -46,7 +61,7 @@ export async function createTimeEntry(input: unknown): Promise<
   const [project, category] = await Promise.all([
     prisma.project.findUnique({
       where: { id: parsed.data.projectId },
-      select: { id: true, name: true, clientId: true, client: { select: { id: true, name: true } } }
+      select: { id: true, name: true, status: true, clientId: true, client: { select: { id: true, name: true } } }
     }),
     prisma.category.findUnique({
       where: { id: parsed.data.categoryId },
@@ -56,6 +71,10 @@ export async function createTimeEntry(input: unknown): Promise<
 
   if (!project) {
     return { ok: false, message: "El proyecto seleccionado no existe" };
+  }
+
+  if (project.status !== ProjectStatus.ACTIVE) {
+    return { ok: false, message: "El proyecto seleccionado esta inactivo" };
   }
 
   if (!category) {
@@ -76,12 +95,6 @@ export async function createTimeEntry(input: unknown): Promise<
     }
   });
 
-  await prisma.timeEntryFavoriteProject.upsert({
-    where: { userId_projectId: { userId: session.user.id, projectId: parsed.data.projectId } },
-    update: {},
-    create: { userId: session.user.id, projectId: parsed.data.projectId }
-  });
-
   await prisma.auditLog.create({
     data: {
       action: AuditAction.CREATE,
@@ -96,7 +109,7 @@ export async function createTimeEntry(input: unknown): Promise<
 
   return {
     ok: true,
-    message: "Horas registradas",
+    message: "Tiempo registrado",
     entry: {
       id: entry.id,
       date: entry.date.toISOString(),
@@ -148,7 +161,7 @@ export async function patchTimeEntry(
   }
 
   const ownsEntry = existing.userId === session.user.id;
-  const superadmin = isSuperadmin(session.user.roles);
+  const superadmin = isSuperadmin(session.user.role);
 
   if (!ownsEntry && !superadmin) {
     return { ok: false, message: "Solo podes editar tus propias cargas" };
@@ -202,11 +215,15 @@ export async function patchTimeEntry(
   if (parsed.data.projectId !== undefined) {
     const project = await prisma.project.findUnique({
       where: { id: parsed.data.projectId },
-      select: { clientId: true }
+      select: { clientId: true, status: true }
     });
 
     if (!project) {
       return { ok: false, message: "El proyecto seleccionado no existe" };
+    }
+
+    if (project.status !== ProjectStatus.ACTIVE) {
+      return { ok: false, message: "El proyecto seleccionado esta inactivo" };
     }
 
     data.projectId = parsed.data.projectId;
@@ -266,18 +283,198 @@ export async function patchTimeEntry(
   };
 }
 
-export async function toggleFavoriteProject(projectId: string) {
+export async function saveTimeEntryFavorite(input: unknown): Promise<
+  | { ok: true; message: string; favorite: SerializedFavorite; duplicate?: boolean }
+  | { ok: false; message: string }
+> {
   const session = await requireSession();
-  const existing = await prisma.timeEntryFavoriteProject.findUnique({
-    where: { userId_projectId: { userId: session.user.id, projectId } }
-  });
+  assertRateLimit(`time-entry-favorite:${session.user.id}`, 20, 60_000);
+  const parsed = timeEntryFavoriteSchema.safeParse(input);
 
-  if (existing) {
-    await prisma.timeEntryFavoriteProject.delete({ where: { id: existing.id } });
-  } else {
-    await prisma.timeEntryFavoriteProject.create({ data: { userId: session.user.id, projectId } });
+  if (!parsed.success) {
+    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos invalidos" };
   }
 
+  const duplicate = await prisma.timeEntryFavorite.findFirst({
+    where: {
+      userId: session.user.id,
+      projectId: parsed.data.projectId,
+      categoryId: parsed.data.categoryId,
+      detail: parsed.data.detail.trim(),
+      minutes: parsed.data.minutes,
+      overtimeMinutes: parsed.data.overtimeMinutes
+    },
+    include: favoriteInclude
+  });
+
+  if (duplicate) {
+    const favorite = await prisma.timeEntryFavorite.update({
+      where: { id: duplicate.id },
+      data: {
+        name: parsed.data.name.trim(),
+        observations: parsed.data.observations?.trim() || null
+      },
+      include: favoriteInclude
+    });
+
+    revalidateTag("time-entry-context");
+    return { ok: true, message: "Ese favorito ya existia", favorite: serializeFavorite(favorite), duplicate: true };
+  }
+
+  const count = await prisma.timeEntryFavorite.count({ where: { userId: session.user.id } });
+  if (count >= 5) {
+    return { ok: false, message: "Solo podes guardar hasta 5 favoritos" };
+  }
+
+  const [project, category] = await Promise.all([
+    prisma.project.findUnique({ where: { id: parsed.data.projectId }, select: { id: true, status: true } }),
+    prisma.category.findUnique({ where: { id: parsed.data.categoryId }, select: { id: true, active: true } })
+  ]);
+
+  if (!project || project.status !== ProjectStatus.ACTIVE) {
+    return { ok: false, message: "El proyecto seleccionado no esta activo" };
+  }
+
+  if (!category || !category.active) {
+    return { ok: false, message: "La categoria seleccionada no esta activa" };
+  }
+
+  const favorite = await prisma.timeEntryFavorite.create({
+    data: {
+      userId: session.user.id,
+      name: parsed.data.name.trim(),
+      projectId: parsed.data.projectId,
+      categoryId: parsed.data.categoryId,
+      detail: parsed.data.detail.trim(),
+      observations: parsed.data.observations?.trim() || null,
+      minutes: parsed.data.minutes,
+      overtimeMinutes: parsed.data.overtimeMinutes
+    },
+    include: favoriteInclude
+  });
+
+  await prisma.auditLog.create({
+    data: { action: AuditAction.CREATE, entity: "TimeEntryFavorite", entityId: favorite.id, actorId: session.user.id }
+  });
+
   revalidateTag("time-entry-context");
-  return { ok: true, message: existing ? "Favorito quitado" : "Favorito agregado" };
+  return { ok: true, message: "Favorito guardado", favorite: serializeFavorite(favorite) };
+}
+
+export async function updateTimeEntryFavorite(
+  favoriteId: string,
+  input: unknown
+): Promise<{ ok: true; message: string; favorite: SerializedFavorite } | { ok: false; message: string }> {
+  const session = await requireSession();
+  assertRateLimit(`time-entry-favorite-update:${session.user.id}`, 30, 60_000);
+  const parsed = timeEntryFavoriteSchema.safeParse(input);
+
+  if (!parsed.success) {
+    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos invalidos" };
+  }
+
+  const existing = await prisma.timeEntryFavorite.findUnique({ where: { id: favoriteId }, select: { userId: true } });
+
+  if (!existing || existing.userId !== session.user.id) {
+    return { ok: false, message: "No podes editar este favorito" };
+  }
+
+  const [project, category, duplicate] = await Promise.all([
+    prisma.project.findUnique({ where: { id: parsed.data.projectId }, select: { id: true, status: true } }),
+    prisma.category.findUnique({ where: { id: parsed.data.categoryId }, select: { id: true, active: true } }),
+    prisma.timeEntryFavorite.findFirst({
+      where: {
+        id: { not: favoriteId },
+        userId: session.user.id,
+        projectId: parsed.data.projectId,
+        categoryId: parsed.data.categoryId,
+        detail: parsed.data.detail.trim(),
+        minutes: parsed.data.minutes,
+        overtimeMinutes: parsed.data.overtimeMinutes
+      },
+      select: { id: true }
+    })
+  ]);
+
+  if (!project || project.status !== ProjectStatus.ACTIVE) {
+    return { ok: false, message: "El proyecto seleccionado no esta activo" };
+  }
+
+  if (!category || !category.active) {
+    return { ok: false, message: "La categoria seleccionada no esta activa" };
+  }
+
+  if (duplicate) {
+    return { ok: false, message: "Ya existe un favorito con esa configuracion" };
+  }
+
+  const favorite = await prisma.timeEntryFavorite.update({
+    where: { id: favoriteId },
+    data: {
+      name: parsed.data.name.trim(),
+      projectId: parsed.data.projectId,
+      categoryId: parsed.data.categoryId,
+      detail: parsed.data.detail.trim(),
+      observations: parsed.data.observations?.trim() || null,
+      minutes: parsed.data.minutes,
+      overtimeMinutes: parsed.data.overtimeMinutes
+    },
+    include: favoriteInclude
+  });
+
+  await prisma.auditLog.create({
+    data: { action: AuditAction.UPDATE, entity: "TimeEntryFavorite", entityId: favorite.id, actorId: session.user.id }
+  });
+
+  revalidateTag("time-entry-context");
+  return { ok: true, message: "Favorito actualizado", favorite: serializeFavorite(favorite) };
+}
+
+export async function deleteTimeEntryFavorite(favoriteId: string) {
+  const session = await requireSession();
+  const existing = await prisma.timeEntryFavorite.findUnique({ where: { id: favoriteId }, select: { userId: true } });
+
+  if (!existing || existing.userId !== session.user.id) {
+    return { ok: false, message: "No podes eliminar este favorito" };
+  }
+
+  await prisma.timeEntryFavorite.delete({ where: { id: favoriteId } });
+  await prisma.auditLog.create({
+    data: { action: AuditAction.DELETE, entity: "TimeEntryFavorite", entityId: favoriteId, actorId: session.user.id }
+  });
+
+  revalidateTag("time-entry-context");
+  return { ok: true, message: "Favorito eliminado" };
+}
+
+const favoriteInclude = {
+  project: { select: { name: true, client: { select: { name: true } } } },
+  category: { select: { name: true } }
+} as const;
+
+function serializeFavorite(favorite: {
+  id: string;
+  name: string;
+  projectId: string;
+  categoryId: string;
+  detail: string;
+  observations: string | null;
+  minutes: number;
+  overtimeMinutes: number;
+  project: { name: string; client: { name: string } };
+  category: { name: string };
+}): SerializedFavorite {
+  return {
+    id: favorite.id,
+    name: favorite.name,
+    projectId: favorite.projectId,
+    categoryId: favorite.categoryId,
+    detail: favorite.detail,
+    observations: favorite.observations,
+    minutes: favorite.minutes,
+    overtimeMinutes: favorite.overtimeMinutes,
+    project: favorite.project.name,
+    client: favorite.project.client.name,
+    category: favorite.category.name
+  };
 }

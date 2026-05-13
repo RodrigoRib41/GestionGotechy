@@ -1,20 +1,19 @@
-import { Role } from "@prisma/client";
+import { Role, UserStatus } from "@prisma/client";
 import type { Session } from "next-auth";
 
 import { auth } from "@/auth";
 
-export function getRoles(session?: Session | null) {
-  return session?.user.roles?.length ? session.user.roles : session?.user.role ? [session.user.role] : [];
+export function getRole(session?: Session | null) {
+  return session?.user.role ?? null;
 }
 
-export function hasRole(session: Session | null | undefined, roles: Role[]) {
-  const userRoles = getRoles(session);
-  return userRoles.includes(Role.SUPERADMIN) || roles.some((role) => userRoles.includes(role));
+export function hasRole(session: Session | null | undefined, allowedRoles: Role[]) {
+  const role = getRole(session);
+  return role === Role.SUPERADMIN || Boolean(role && allowedRoles.includes(role));
 }
 
-export function isSuperadmin(roleOrRoles?: Role | Role[] | null) {
-  const roles = Array.isArray(roleOrRoles) ? roleOrRoles : roleOrRoles ? [roleOrRoles] : [];
-  return roles.includes(Role.SUPERADMIN);
+export function isSuperadmin(role?: Role | null) {
+  return role === Role.SUPERADMIN;
 }
 
 export async function requireSession() {
@@ -24,23 +23,27 @@ export async function requireSession() {
     throw new Error("No autenticado");
   }
 
+  if (session.user.status !== UserStatus.ACTIVE) {
+    throw new Error("Cuenta sin acceso activo");
+  }
+
   return session;
 }
 
 export async function requireSuperadmin() {
   const session = await requireSession();
 
-  if (!isSuperadmin(session.user.roles)) {
+  if (!isSuperadmin(session.user.role)) {
     throw new Error("Permisos insuficientes");
   }
 
   return session;
 }
 
-export async function requireRole(roles: Role[]) {
+export async function requireRole(allowedRoles: Role[]) {
   const session = await requireSession();
 
-  if (!hasRole(session, roles)) {
+  if (!hasRole(session, allowedRoles)) {
     throw new Error("Permisos insuficientes");
   }
 
@@ -48,9 +51,33 @@ export async function requireRole(roles: Role[]) {
 }
 
 export function canManageResources(session: Session | null | undefined) {
-  return hasRole(session, [Role.ADMINISTRATOR]);
+  return hasRole(session, [Role.ADMINISTRADOR]);
 }
 
 export function canViewGlobalReports(session: Session | null | undefined) {
-  return hasRole(session, [Role.REPORTER]);
+  return hasRole(session, [Role.ADMINISTRADOR]);
+}
+
+export function canManageTracking(session: Session | null | undefined) {
+  return hasRole(session, [Role.ADMINISTRADOR]);
+}
+
+export function canExportTracking(session: Session | null | undefined) {
+  return hasRole(session, [Role.ADMINISTRADOR]);
+}
+
+export function canViewTracking(session: Session | null | undefined) {
+  return hasRole(session, [Role.ADMINISTRADOR]);
+}
+
+export function canViewObjectives(session: Session | null | undefined) {
+  return hasRole(session, [Role.ADMINISTRADOR]);
+}
+
+export function canManageObjectives(session: Session | null | undefined) {
+  return hasRole(session, [Role.SUPERADMIN]);
+}
+
+export function canDeleteTimeHistory(session: Session | null | undefined) {
+  return hasRole(session, [Role.SUPERADMIN]);
 }

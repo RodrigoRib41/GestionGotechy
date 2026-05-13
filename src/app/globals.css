@@ -44,6 +44,40 @@
     --ring: 176 60% 44%;
   }
 
+  [data-theme="midnight"] {
+    --background: 225 28% 7%;
+    --foreground: 210 30% 96%;
+    --card: 225 24% 10%;
+    --card-foreground: 210 30% 96%;
+    --primary: 198 93% 60%;
+    --primary-foreground: 222 47% 11%;
+    --secondary: 224 18% 16%;
+    --secondary-foreground: 210 30% 96%;
+    --muted: 223 16% 18%;
+    --muted-foreground: 215 20% 72%;
+    --accent: 198 93% 60%;
+    --accent-foreground: 222 47% 11%;
+    --border: 223 15% 20%;
+    --input: 223 15% 20%;
+    --ring: 198 93% 60%;
+  }
+
+  [data-theme="emerald"] {
+    --primary: 158 64% 30%;
+    --primary-foreground: 0 0% 100%;
+    --accent: 160 84% 39%;
+    --accent-foreground: 158 100% 12%;
+    --ring: 160 84% 39%;
+  }
+
+  [data-theme="corporate"] {
+    --primary: 222 72% 32%;
+    --primary-foreground: 0 0% 100%;
+    --accent: 215 20% 48%;
+    --accent-foreground: 0 0% 100%;
+    --ring: 222 72% 42%;
+  }
+
   * {
     @apply border-border;
   }
@@ -70,5 +104,13 @@
 
   .glass-panel {
     @apply border border-white/60 bg-white/75 shadow-soft backdrop-blur-xl dark:border-white/10 dark:bg-card/80;
+  }
+
+  .gotechy-search-mark {
+    @apply rounded bg-amber-200 px-0.5 text-amber-950;
+  }
+
+  .gotechy-search-mark-active {
+    @apply bg-primary text-primary-foreground ring-2 ring-ring;
   }
 }
