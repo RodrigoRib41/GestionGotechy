@@ -25,6 +25,7 @@ type SerializedEntry = {
   clientId: string;
   category: string;
   categoryId: string;
+  categoryKind: string;
   detail: string;
   observations?: string | null;
   minutes: number;
@@ -43,6 +44,7 @@ type SerializedFavorite = {
   project: string;
   client: string;
   category: string;
+  categoryKind: string;
 };
 
 export async function createTimeEntry(input: unknown): Promise<
@@ -65,7 +67,7 @@ export async function createTimeEntry(input: unknown): Promise<
     }),
     prisma.category.findUnique({
       where: { id: parsed.data.categoryId },
-      select: { id: true, name: true }
+      select: { id: true, name: true, kind: true }
     })
   ]);
 
@@ -120,6 +122,7 @@ export async function createTimeEntry(input: unknown): Promise<
       clientId: project.client.id,
       category: category.name,
       categoryId: category.id,
+      categoryKind: category.kind,
       detail: entry.detail,
       observations: entry.observations,
       minutes: entry.minutes,
@@ -246,7 +249,7 @@ export async function patchTimeEntry(
       user: { select: { name: true, email: true } },
       project: { select: { name: true } },
       client: { select: { name: true } },
-      category: { select: { name: true } }
+      category: { select: { name: true, kind: true } }
     }
   });
 
@@ -275,6 +278,7 @@ export async function patchTimeEntry(
       clientId: entry.clientId,
       category: entry.category.name,
       categoryId: entry.categoryId,
+      categoryKind: entry.category.kind,
       detail: entry.detail,
       observations: entry.observations,
       minutes: entry.minutes,
@@ -449,7 +453,7 @@ export async function deleteTimeEntryFavorite(favoriteId: string) {
 
 const favoriteInclude = {
   project: { select: { name: true, client: { select: { name: true } } } },
-  category: { select: { name: true } }
+  category: { select: { name: true, kind: true } }
 } as const;
 
 function serializeFavorite(favorite: {
@@ -462,7 +466,7 @@ function serializeFavorite(favorite: {
   minutes: number;
   overtimeMinutes: number;
   project: { name: string; client: { name: string } };
-  category: { name: string };
+  category: { name: string; kind: string };
 }): SerializedFavorite {
   return {
     id: favorite.id,
@@ -475,6 +479,7 @@ function serializeFavorite(favorite: {
     overtimeMinutes: favorite.overtimeMinutes,
     project: favorite.project.name,
     client: favorite.project.client.name,
-    category: favorite.category.name
+    category: favorite.category.name,
+    categoryKind: favorite.category.kind
   };
 }

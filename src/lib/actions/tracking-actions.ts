@@ -117,12 +117,18 @@ export async function patchTrackingTask(input: unknown) {
       priority: true,
       dueDate: true,
       estimatedMinutes: true,
-      tags: true
+      tags: true,
+      archivedAt: true,
+      deletedAt: true
     }
   });
 
   if (!existing) {
     return { ok: false, message: "La tarea no existe" };
+  }
+
+  if (existing.deletedAt) {
+    return { ok: false, message: "No se puede editar una tarea eliminada" };
   }
 
   const clientId = parsed.data.clientId ?? existing.clientId;
@@ -184,6 +190,128 @@ export async function patchTrackingTask(input: unknown) {
   return { ok: true, message: "Tarea actualizada" };
 }
 
+export async function archiveTrackingTask(taskId: string) {
+  const session = await requireRole([Role.ADMINISTRADOR]);
+  const task = await prisma.trackingTask.findUnique({
+    where: { id: taskId },
+    select: { id: true, title: true, archivedAt: true, deletedAt: true }
+  });
+
+  if (!task) {
+    return { ok: false, message: "La tarea no existe" };
+  }
+
+  if (task.deletedAt) {
+    return { ok: false, message: "No se puede archivar una tarea eliminada" };
+  }
+
+  if (task.archivedAt) {
+    return { ok: true, message: "La tarea ya estaba archivada" };
+  }
+
+  await prisma.$transaction([
+    prisma.trackingTask.update({
+      where: { id: task.id },
+      data: { archivedAt: new Date(), archivedById: session.user.id }
+    }),
+    prisma.trackingTaskHistory.create({
+      data: {
+        taskId: task.id,
+        actorId: session.user.id,
+        action: TrackingHistoryAction.UPDATE,
+        message: "Tarea archivada",
+        fromValue: { archivedAt: null },
+        toValue: { archivedAt: new Date().toISOString() }
+      }
+    }),
+    prisma.auditLog.create({
+      data: { action: AuditAction.STATUS_CHANGE, entity: "TrackingTask", entityId: task.id, actorId: session.user.id, metadata: { lifecycle: "ARCHIVED" } }
+    })
+  ]);
+
+  revalidateTracking();
+  return { ok: true, message: "Tarea archivada" };
+}
+
+export async function deleteTrackingTask(taskId: string) {
+  const session = await requireRole([Role.ADMINISTRADOR]);
+  const task = await prisma.trackingTask.findUnique({
+    where: { id: taskId },
+    select: { id: true, title: true, deletedAt: true }
+  });
+
+  if (!task) {
+    return { ok: false, message: "La tarea no existe" };
+  }
+
+  if (task.deletedAt) {
+    return { ok: true, message: "La tarea ya estaba eliminada" };
+  }
+
+  await prisma.$transaction([
+    prisma.trackingTask.update({
+      where: { id: task.id },
+      data: { deletedAt: new Date(), deletedById: session.user.id }
+    }),
+    prisma.trackingTaskHistory.create({
+      data: {
+        taskId: task.id,
+        actorId: session.user.id,
+        action: TrackingHistoryAction.UPDATE,
+        message: "Tarea eliminada logicamente",
+        fromValue: { deletedAt: null },
+        toValue: { deletedAt: new Date().toISOString() }
+      }
+    }),
+    prisma.auditLog.create({
+      data: { action: AuditAction.DELETE, entity: "TrackingTask", entityId: task.id, actorId: session.user.id, metadata: { lifecycle: "DELETED" } }
+    })
+  ]);
+
+  revalidateTracking();
+  return { ok: true, message: "Tarea movida a eliminadas" };
+}
+
+export async function restoreTrackingTask(taskId: string) {
+  const session = await requireRole([Role.ADMINISTRADOR]);
+  const task = await prisma.trackingTask.findUnique({
+    where: { id: taskId },
+    select: { id: true, archivedAt: true, deletedAt: true }
+  });
+
+  if (!task) {
+    return { ok: false, message: "La tarea no existe" };
+  }
+
+  await prisma.$transaction([
+    prisma.trackingTask.update({
+      where: { id: task.id },
+      data: {
+        archivedAt: null,
+        archivedById: null,
+        deletedAt: null,
+        deletedById: null
+      }
+    }),
+    prisma.trackingTaskHistory.create({
+      data: {
+        taskId: task.id,
+        actorId: session.user.id,
+        action: TrackingHistoryAction.REOPEN,
+        message: "Tarea restaurada",
+        fromValue: { archivedAt: task.archivedAt, deletedAt: task.deletedAt },
+        toValue: { archivedAt: null, deletedAt: null }
+      }
+    }),
+    prisma.auditLog.create({
+      data: { action: AuditAction.STATUS_CHANGE, entity: "TrackingTask", entityId: task.id, actorId: session.user.id, metadata: { lifecycle: "ACTIVE" } }
+    })
+  ]);
+
+  revalidateTracking();
+  return { ok: true, message: "Tarea restaurada" };
+}
+
 export async function changeTrackingTaskStatus(input: unknown) {
   const session = await requireSession();
   assertRateLimit(`tracking-status:${session.user.id}`, 120, 60_000);
@@ -196,7 +324,7 @@ export async function changeTrackingTaskStatus(input: unknown) {
   const [task, nextStatus] = await Promise.all([
     prisma.trackingTask.findUnique({
       where: { id: parsed.data.taskId },
-      select: { id: true, assigneeId: true, statusId: true, status: { select: { name: true, isFinal: true } } }
+      select: { id: true, assigneeId: true, statusId: true, deletedAt: true, status: { select: { name: true, isFinal: true } } }
     }),
     prisma.trackingTaskStatus.findUnique({
       where: { id: parsed.data.statusId },
@@ -206,6 +334,10 @@ export async function changeTrackingTaskStatus(input: unknown) {
 
   if (!task) {
     return { ok: false, message: "La tarea no existe" };
+  }
+
+  if (task.deletedAt) {
+    return { ok: false, message: "No se puede actualizar una tarea eliminada" };
   }
 
   if (!canTouchTask(session, task)) {
@@ -255,10 +387,14 @@ export async function addTrackingComment(input: unknown) {
     return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos invalidos" };
   }
 
-  const task = await prisma.trackingTask.findUnique({ where: { id: parsed.data.taskId }, select: { id: true, assigneeId: true } });
+  const task = await prisma.trackingTask.findUnique({ where: { id: parsed.data.taskId }, select: { id: true, assigneeId: true, deletedAt: true } });
 
   if (!task) {
     return { ok: false, message: "La tarea no existe" };
+  }
+
+  if (task.deletedAt) {
+    return { ok: false, message: "No se puede comentar una tarea eliminada" };
   }
 
   if (!canTouchTask(session, task)) {
@@ -290,10 +426,14 @@ export async function logTrackingTaskTime(input: unknown) {
     return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos invalidos" };
   }
 
-  const task = await prisma.trackingTask.findUnique({ where: { id: parsed.data.taskId }, select: { id: true, assigneeId: true, consumedMinutes: true } });
+  const task = await prisma.trackingTask.findUnique({ where: { id: parsed.data.taskId }, select: { id: true, assigneeId: true, consumedMinutes: true, deletedAt: true } });
 
   if (!task) {
     return { ok: false, message: "La tarea no existe" };
+  }
+
+  if (task.deletedAt) {
+    return { ok: false, message: "No se puede imputar tiempo en una tarea eliminada" };
   }
 
   if (!canTouchTask(session, task)) {

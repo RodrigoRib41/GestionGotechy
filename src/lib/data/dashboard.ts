@@ -31,7 +31,7 @@ export async function getDashboardData(input: DashboardRangeInput = {}) {
     const [data, pinnedDashboardIds] = await Promise.all([
       unstable_cache(
         () => buildDashboardData({ start: range.start, end: range.end, scopeUserId, globalScope }),
-        ["dashboard-data-v4", scopeKey, range.from, range.to],
+        ["dashboard-data-v5", scopeKey, range.from, range.to],
         { revalidate: 60, tags: ["dashboard-metrics"] }
       )(),
       preferenceUserId ? getPinnedDashboardIds(preferenceUserId) : Promise.resolve([])
@@ -151,7 +151,7 @@ async function buildDashboardData({ start, end, scopeUserId, globalScope }: Dash
         user: { select: { name: true, email: true } },
         project: { select: { name: true } },
         client: { select: { name: true } },
-        category: { select: { name: true } }
+        category: { select: { name: true, kind: true } }
       },
       orderBy: { updatedAt: "desc" },
       take: 8
@@ -382,6 +382,7 @@ async function buildDashboardData({ start, end, scopeUserId, globalScope }: Dash
       project: entry.project.name,
       client: entry.client.name,
       category: entry.category.name,
+      categoryKind: entry.category.kind,
       detail: entry.detail,
       minutes: entry.minutes,
       overtimeMinutes: entry.overtimeMinutes

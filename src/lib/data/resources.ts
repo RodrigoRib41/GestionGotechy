@@ -173,7 +173,7 @@ export async function getReportsData() {
         user: { select: { id: true, name: true, email: true } },
         project: { select: { id: true, name: true } },
         client: { select: { id: true, name: true } },
-        category: { select: { name: true } }
+        category: { select: { name: true, kind: true } }
       },
       orderBy: { date: "desc" },
       take: 1500
@@ -189,6 +189,7 @@ export async function getReportsData() {
       client: entry.client.name,
       clientId: entry.client.id,
       category: entry.category.name,
+      categoryKind: entry.category.kind,
       detail: entry.detail,
       observations: entry.observations,
       minutes: entry.minutes,

@@ -54,13 +54,17 @@ const titles: Record<string, string> = {
   "/admin": "Administracion"
 };
 
-export function AppShell({ children, user }: { children: ReactNode; user: Session["user"] }) {
+export function AppShell({ children, hasTrackingAccess = false, user }: { children: ReactNode; hasTrackingAccess?: boolean; user: Session["user"] }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const { theme, setTheme } = useTheme();
   const visibleItems = useMemo(
-    () => navItems.filter((item) => user.role === "SUPERADMIN" || item.allowedRoles.includes(user.role)),
-    [user.role]
+    () =>
+      navItems.filter((item) => {
+        if (item.href === "/tracking") return hasTrackingAccess;
+        return user.role === "SUPERADMIN" || item.allowedRoles.includes(user.role);
+      }),
+    [hasTrackingAccess, user.role]
   );
   const title = titles[pathname] ?? "Gotechy Consulting";
 

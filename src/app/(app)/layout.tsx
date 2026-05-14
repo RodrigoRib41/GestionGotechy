@@ -3,6 +3,8 @@ import { ReactNode } from "react";
 import { UserStatus } from "@prisma/client";
 
 import { auth } from "@/auth";
+import { hasAssignedTrackingTasks } from "@/lib/data/tracking";
+import { canViewTracking } from "@/lib/permissions";
 import { AppShell } from "@/components/navigation/app-shell";
 
 export default async function ProtectedLayout({ children }: { children: ReactNode }) {
@@ -17,6 +19,7 @@ export default async function ProtectedLayout({ children }: { children: ReactNod
   }
 
   const themeVariant = session.user.themeVariant.toLowerCase();
+  const hasTrackingAccess = canViewTracking(session) || (await hasAssignedTrackingTasks(session.user.id));
 
   return (
     <>
@@ -25,7 +28,7 @@ export default async function ProtectedLayout({ children }: { children: ReactNod
           __html: `try{document.documentElement.dataset.theme=localStorage.getItem("gotechy:theme-variant")||"${themeVariant}"}catch(e){document.documentElement.dataset.theme="${themeVariant}"}`,
         }}
       />
-      <AppShell user={session.user}>{children}</AppShell>
+      <AppShell hasTrackingAccess={hasTrackingAccess} user={session.user}>{children}</AppShell>
     </>
   );
 }

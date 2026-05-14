@@ -22,6 +22,7 @@ import type { ReactNode } from "react";
 import { toast } from "sonner";
 
 import { pinDashboard, unpinDashboard } from "@/lib/actions/dashboard-actions";
+import { getCategoryKindMeta } from "@/lib/category-kind";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -498,6 +499,7 @@ function CategoryDistribution({ data }: { data: DashboardData }) {
             <span className="min-w-0 truncate">
               <span className="mr-2 inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: category.color || palette[index % palette.length] }} />
               {category.name}
+              <span className="ml-2 rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground">{getCategoryKindMeta(category.kind).shortLabel}</span>
             </span>
             <span className="font-medium">{formatMinutes(category.value)}</span>
           </div>

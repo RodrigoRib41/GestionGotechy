@@ -4,15 +4,22 @@ import { format, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
 import {
   AlertTriangle,
+  BarChart3,
+  BookOpenCheck,
+  BriefcaseBusiness,
   Calendar,
   Check,
   ChevronDown,
   ChevronRight,
   Clock3,
+  ClipboardList,
   Maximize2,
+  Play,
+  RotateCcw,
   Save,
   Search,
   Star,
+  Square,
   Target,
   TimerReset,
   Trash2,
@@ -29,6 +36,7 @@ import {
   saveTimeEntryFavorite,
   updateTimeEntryFavorite
 } from "@/lib/actions/time-entry-actions";
+import { categoryKindMeta, categoryKindValues, getCategoryKindMeta, type CategoryKindKey } from "@/lib/category-kind";
 import { cn, formatMinutes, toDateInputValue } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -46,7 +54,7 @@ type ProjectOption = {
   consumedMinutes: number;
 };
 
-type CategoryOption = { id: string; name: string; color?: string };
+type CategoryOption = { id: string; name: string; color?: string; kind: string; description?: string | null };
 
 type EntryRow = {
   id: string;
@@ -58,6 +66,7 @@ type EntryRow = {
   clientId: string;
   category: string;
   categoryId: string;
+  categoryKind: string;
   detail: string;
   observations?: string | null;
   minutes: number;
@@ -76,6 +85,7 @@ type FavoriteOption = {
   project: string;
   client: string;
   category: string;
+  categoryKind: string;
 };
 
 type FormState = {
@@ -99,9 +109,20 @@ type EntryPatch = Partial<{
 }>;
 
 type DraftField = keyof FormState;
+type StopwatchState = {
+  startedAt: number | null;
+  finishedAt: number | null;
+  elapsedMs: number;
+};
 
 const autosaveDelay = 700;
 const lowAvailabilityThreshold = 4 * 60;
+const categoryKindIcons = {
+  PRODUCTIVE: BriefcaseBusiness,
+  INTERNAL: Clock3,
+  ADMINISTRATIVE: ClipboardList,
+  TRAINING: BookOpenCheck
+} satisfies Record<CategoryKindKey, typeof Clock3>;
 
 export function QuickTimeEntry({
   userId,
@@ -147,12 +168,18 @@ export function QuickTimeEntry({
   const [favorites, setFavorites] = useState(initialFavorites);
   const [selectedFavoriteId, setSelectedFavoriteId] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [categoryKindFilter, setCategoryKindFilter] = useState<"ALL" | CategoryKindKey>("ALL");
   const [isPending, startTransition] = useTransition();
   const projectById = useMemo(() => new Map(localProjects.map((project) => [project.id, project])), [localProjects]);
   const categoryById = useMemo(() => new Map(categories.map((category) => [category.id, category])), [categories]);
+  const visibleCategories = useMemo(
+    () => categories.filter((category) => categoryKindFilter === "ALL" || category.kind === categoryKindFilter),
+    [categories, categoryKindFilter]
+  );
   const defaultProjectId = favorites.at(0)?.projectId ?? localProjects.at(0)?.id ?? "";
   const defaultCategoryId = favorites.at(0)?.categoryId ?? categories.at(0)?.id ?? "";
   const favoriteCacheKey = `gotechy:time-favorites:${userId}`;
+  const stopwatchCacheKey = `gotechy:time-stopwatch:${userId}`;
   const [form, setForm] = useState<FormState>({
     date: toDateInputValue(),
     projectId: defaultProjectId,
@@ -162,8 +189,15 @@ export function QuickTimeEntry({
     minutes: "30",
     overtimeMinutes: "0"
   });
+  const [stopwatch, setStopwatch] = useState<StopwatchState>({ startedAt: null, finishedAt: null, elapsedMs: 0 });
+  const [stopwatchNow, setStopwatchNow] = useState(() => Date.now());
   const selectedProject = projectById.get(form.projectId);
+  const selectedCategory = categoryById.get(form.categoryId);
   const selectedFavorite = selectedFavoriteId ? favorites.find((favorite) => favorite.id === selectedFavoriteId) : null;
+  const isStopwatchRunning = Boolean(stopwatch.startedAt && !stopwatch.finishedAt);
+  const stopwatchElapsedMs =
+    isStopwatchRunning && stopwatch.startedAt ? Math.max(0, stopwatchNow - stopwatch.startedAt) : stopwatch.elapsedMs;
+  const stopwatchElapsedMinutes = elapsedMsToMinutes(stopwatchElapsedMs);
   const workedMinutes = minutesInputToMinutes(form.minutes);
   const extraMinutes = minutesInputToMinutes(form.overtimeMinutes, true);
   const canSubmit = Boolean(
@@ -184,7 +218,15 @@ export function QuickTimeEntry({
     return { consumedMinutes, remainingMinutes, percent, low: remainingMinutes < lowAvailabilityThreshold };
   }, [selectedProject]);
   const groupedDays = useMemo(() => groupEntriesByDay(entries), [entries]);
+  const categoryKindStats = useMemo(() => buildCategoryKindStats(entries, categoryById), [categoryById, entries]);
   const [expandedDays, setExpandedDays] = useState<Set<string>>(() => new Set(groupEntriesByDay(recentEntries).slice(0, 3).map((group) => group.key)));
+
+  useEffect(() => {
+    if (!visibleCategories.length) return;
+    if (!visibleCategories.some((category) => category.id === form.categoryId)) {
+      setForm((current) => ({ ...current, categoryId: visibleCategories[0].id }));
+    }
+  }, [form.categoryId, visibleCategories]);
 
   useEffect(() => {
     try {
@@ -206,6 +248,50 @@ export function QuickTimeEntry({
     }
   }, [favoriteCacheKey, favorites]);
 
+  useEffect(() => {
+    try {
+      const cached = window.localStorage.getItem(stopwatchCacheKey);
+      if (!cached) return;
+
+      const parsed = JSON.parse(cached) as Partial<StopwatchState>;
+      const startedAt = toTimestamp(parsed.startedAt);
+      const finishedAt = toTimestamp(parsed.finishedAt);
+      const elapsedMs =
+        typeof parsed.elapsedMs === "number" && Number.isFinite(parsed.elapsedMs)
+          ? Math.max(0, parsed.elapsedMs)
+          : startedAt && finishedAt
+            ? Math.max(0, finishedAt - startedAt)
+            : 0;
+
+      if (startedAt || elapsedMs > 0) {
+        setStopwatch({ startedAt, finishedAt, elapsedMs });
+        setStopwatchNow(Date.now());
+      }
+    } catch {
+      return;
+    }
+  }, [stopwatchCacheKey]);
+
+  useEffect(() => {
+    if (!isStopwatchRunning) return;
+
+    const timer = window.setInterval(() => setStopwatchNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [isStopwatchRunning]);
+
+  useEffect(() => {
+    try {
+      if (!stopwatch.startedAt && !stopwatch.finishedAt && stopwatch.elapsedMs === 0) {
+        window.localStorage.removeItem(stopwatchCacheKey);
+        return;
+      }
+
+      window.localStorage.setItem(stopwatchCacheKey, JSON.stringify(stopwatch));
+    } catch {
+      return;
+    }
+  }, [stopwatch, stopwatchCacheKey]);
+
   const applyEntryPatch = useCallback(
     (entry: EntryRow, patch: EntryPatch): EntryRow => {
       const project = patch.projectId ? projectById.get(patch.projectId) : null;
@@ -220,6 +306,7 @@ export function QuickTimeEntry({
         client: project?.client.name ?? entry.client,
         categoryId: patch.categoryId ?? entry.categoryId,
         category: category?.name ?? entry.category,
+        categoryKind: category?.kind ?? entry.categoryKind,
         detail: patch.detail ?? entry.detail,
         observations: patch.observations ?? entry.observations,
         minutes: patch.minutes ?? entry.minutes,
@@ -324,7 +411,56 @@ export function QuickTimeEntry({
     });
   }
 
+  function startStopwatch() {
+    const startedAt = Date.now();
+    const startedLine = buildStopwatchStartLine(startedAt);
+
+    setStopwatch({ startedAt, finishedAt: null, elapsedMs: 0 });
+    setStopwatchNow(startedAt);
+    setForm((current) => ({
+      ...current,
+      date: current.date || toDateInputValue(new Date(startedAt)),
+      detail: current.detail.trim() ? current.detail : "Tarea cronometrada",
+      observations: appendObservationLines(current.observations, [startedLine])
+    }));
+    toast.success("Cronometro iniciado");
+  }
+
+  function finishStopwatch() {
+    if (!stopwatch.startedAt || stopwatch.finishedAt) return;
+
+    const startedAt = stopwatch.startedAt;
+    const finishedAt = Date.now();
+    const elapsedMs = Math.max(0, finishedAt - startedAt);
+    const elapsedMinutes = elapsedMsToMinutes(elapsedMs);
+
+    setStopwatch({ startedAt, finishedAt, elapsedMs });
+    setStopwatchNow(finishedAt);
+    setForm((current) => ({
+      ...current,
+      date: current.date || toDateInputValue(new Date(startedAt)),
+      detail: current.detail.trim() ? current.detail : "Tarea cronometrada",
+      minutes: minutesToInput(elapsedMinutes),
+      observations: appendObservationLines(current.observations, [
+        buildStopwatchStartLine(startedAt),
+        buildStopwatchFinishLine(finishedAt),
+        `Duracion cronometrada: ${formatMinutes(elapsedMinutes)}`
+      ])
+    }));
+    toast.success(`Cronometro finalizado: ${formatMinutes(elapsedMinutes)}`);
+  }
+
+  function resetStopwatch() {
+    setStopwatch({ startedAt: null, finishedAt: null, elapsedMs: 0 });
+    setStopwatchNow(Date.now());
+  }
+
   function submit() {
+    if (isStopwatchRunning) {
+      toast.error("Finaliza el cronometro antes de guardar");
+      return;
+    }
+
     if (!canSubmit || workedMinutes === null || extraMinutes === null) {
       toast.error("Ingresa minutos positivos y validos");
       return;
@@ -363,6 +499,7 @@ export function QuickTimeEntry({
         minutes: "30",
         overtimeMinutes: "0"
       }));
+      if (stopwatch.startedAt) resetStopwatch();
     });
   }
 
@@ -375,14 +512,20 @@ export function QuickTimeEntry({
         <MiniKpi label="Pendiente" value={formatMinutes(personalMetrics.pendingMinutes)} helper={`${formatMinutes(personalMetrics.overtimeMinutes)} extras`} />
       </section>
 
+      <CategoryKindOverview stats={categoryKindStats} />
+
       {goalProgress.length ? <GoalProgressPanel goals={goalProgress} /> : null}
 
       <section className="rounded-lg border bg-card p-3 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <div>
             <h2 className="text-sm font-semibold">Carga rapida</h2>
+            <p className="text-xs text-muted-foreground">El tipo de categoria queda visible para evitar imputaciones confusas.</p>
           </div>
-          {selectedProject ? <Badge variant="outline">{selectedProject.client.name}</Badge> : null}
+          <div className="flex flex-wrap items-center gap-2">
+            {selectedCategory ? <CategoryKindBadge kind={selectedCategory.kind} /> : null}
+            {selectedProject ? <Badge variant="outline">{selectedProject.client.name}</Badge> : null}
+          </div>
         </div>
 
         <div className="mb-3 space-y-2">
@@ -426,14 +569,29 @@ export function QuickTimeEntry({
           ) : null}
         </div>
 
+        <StopwatchPanel
+          elapsedMs={stopwatchElapsedMs}
+          elapsedMinutes={stopwatchElapsedMinutes}
+          finishedAt={stopwatch.finishedAt}
+          isRunning={isStopwatchRunning}
+          startedAt={stopwatch.startedAt}
+          onFinish={finishStopwatch}
+          onReset={resetStopwatch}
+          onStart={startStopwatch}
+        />
+
         <form
           className="space-y-2"
           onSubmit={(event) => {
             event.preventDefault();
+            if (isStopwatchRunning) {
+              toast.error("Finaliza el cronometro antes de guardar");
+              return;
+            }
             if (canSubmit) submit();
           }}
         >
-          <div className="grid gap-2 md:grid-cols-[150px_minmax(0,1fr)_220px]">
+          <div className="grid gap-2 md:grid-cols-[150px_minmax(0,1fr)_170px_220px]">
             <CompactField icon={Calendar}>
               <Input aria-label="Fecha" className="h-9" type="date" value={form.date} onChange={(event) => updateForm("date", event.target.value)} />
             </CompactField>
@@ -444,14 +602,24 @@ export function QuickTimeEntry({
                 </option>
               ))}
             </Select>
+            <Select aria-label="Filtrar tipo de categoria" className="h-9" value={categoryKindFilter} onChange={(event) => setCategoryKindFilter(event.target.value as "ALL" | CategoryKindKey)}>
+              <option value="ALL">Todos los tipos</option>
+              {categoryKindValues.map((kind) => (
+                <option key={kind} value={kind}>
+                  {categoryKindMeta[kind].label}
+                </option>
+              ))}
+            </Select>
             <Select aria-label="Categoria" className="h-9" value={form.categoryId} onChange={(event) => updateForm("categoryId", event.target.value)}>
-              {categories.map((category) => (
+              {visibleCategories.map((category) => (
                 <option key={category.id} value={category.id}>
-                  {category.name}
+                  {category.name} - {getCategoryKindMeta(category.kind).label}
                 </option>
               ))}
             </Select>
           </div>
+
+          {selectedCategory ? <SelectedCategoryHint category={selectedCategory} /> : null}
 
           {projectAvailability ? <ProjectAvailability project={selectedProject} availability={projectAvailability} /> : null}
 
@@ -491,7 +659,7 @@ export function QuickTimeEntry({
             </CompactField>
             <div className="flex items-center justify-between gap-2 rounded-md bg-muted/60 px-2 py-1 text-xs text-muted-foreground md:justify-end">
               <span>Total {formatMinutes((workedMinutes ?? 0) + (extraMinutes ?? 0))}</span>
-              <Button className="h-9" disabled={!canSubmit || isPending} type="submit">
+              <Button className="h-9" disabled={!canSubmit || isPending || isStopwatchRunning} type="submit">
                 <Save className="mr-2 h-4 w-4" />
                 {isPending ? "Guardando" : "Guardar"}
               </Button>
@@ -554,6 +722,72 @@ export function QuickTimeEntry({
   );
 }
 
+function CategoryKindOverview({ stats }: { stats: Array<{ kind: string; minutes: number; entries: number; percent: number }> }) {
+  return (
+    <section className="rounded-lg border bg-card p-3 shadow-sm">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <BarChart3 className="h-4 w-4 text-teal-600" />
+          <h2 className="text-sm font-semibold">Tiempo por tipo de categoria</h2>
+        </div>
+        <CategoryKindLegend />
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        {stats.map((item) => {
+          const meta = getCategoryKindMeta(item.kind);
+          return (
+            <div key={item.kind} className={cn("rounded-md border p-3", meta.bgClass, meta.borderClass)}>
+              <div className="flex items-center justify-between gap-2">
+                <CategoryKindBadge kind={item.kind} />
+                <span className="text-xs font-medium text-muted-foreground">{item.percent}%</span>
+              </div>
+              <div className="mt-2 text-lg font-semibold">{formatMinutes(item.minutes)}</div>
+              <div className="mt-1 text-xs text-muted-foreground">{item.entries} registros recientes</div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function CategoryKindLegend() {
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {categoryKindValues.map((kind) => (
+        <CategoryKindBadge key={kind} compact kind={kind} />
+      ))}
+    </div>
+  );
+}
+
+function SelectedCategoryHint({ category }: { category: CategoryOption }) {
+  const meta = getCategoryKindMeta(category.kind);
+
+  return (
+    <div className={cn("flex flex-col gap-2 rounded-md border px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between", meta.bgClass, meta.borderClass)}>
+      <div className="flex min-w-0 items-center gap-2">
+        <CategoryKindBadge kind={category.kind} />
+        <span className="truncate font-medium">{category.name}</span>
+      </div>
+      <span className="text-muted-foreground">{category.description || meta.description}</span>
+    </div>
+  );
+}
+
+function CategoryKindBadge({ kind, compact = false, suffix }: { kind?: string | null; compact?: boolean; suffix?: string }) {
+  const meta = getCategoryKindMeta(kind);
+  const Icon = categoryKindIcons[(kind as CategoryKindKey) || "PRODUCTIVE"] ?? BriefcaseBusiness;
+
+  return (
+    <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium", meta.bgClass, meta.textClass, meta.borderClass)}>
+      <Icon className={compact ? "h-3 w-3" : "h-3.5 w-3.5"} />
+      {compact ? meta.shortLabel : meta.label}
+      {suffix ? <span className="text-muted-foreground">{suffix}</span> : null}
+    </span>
+  );
+}
+
 function ProjectAvailability({
   project,
   availability
@@ -594,6 +828,75 @@ function ProjectAvailability({
           <br />
           usado
         </span>
+      </div>
+    </div>
+  );
+}
+
+function StopwatchPanel({
+  elapsedMs,
+  elapsedMinutes,
+  finishedAt,
+  isRunning,
+  startedAt,
+  onFinish,
+  onReset,
+  onStart
+}: {
+  elapsedMs: number;
+  elapsedMinutes: number;
+  finishedAt: number | null;
+  isRunning: boolean;
+  startedAt: number | null;
+  onFinish: () => void;
+  onReset: () => void;
+  onStart: () => void;
+}) {
+  const hasTiming = Boolean(startedAt);
+
+  return (
+    <div
+      className={cn(
+        "mb-3 grid gap-3 rounded-md border p-3 md:grid-cols-[minmax(0,1fr)_auto]",
+        isRunning ? "border-teal-500/50 bg-teal-500/5" : "bg-muted/30"
+      )}
+    >
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-teal-500/10 text-teal-700">
+            <TimerReset className="h-4 w-4" />
+          </span>
+          <div className="min-w-0">
+            <div className="text-sm font-semibold">Cronometro opcional</div>
+            <div className="text-xs text-muted-foreground">
+              {isRunning ? "En curso" : finishedAt ? "Listo para guardar" : "Inactivo"}
+            </div>
+          </div>
+          <Badge variant={isRunning ? "success" : finishedAt ? "warning" : "muted"}>{formatMinutes(elapsedMinutes)}</Badge>
+        </div>
+        <div className="mt-3 flex flex-wrap items-end gap-x-5 gap-y-2">
+          <div className="font-mono text-3xl font-semibold tracking-normal tabular-nums" aria-live="polite">
+            {formatStopwatchDuration(elapsedMs)}
+          </div>
+          <div className="grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
+            <span>Inicio de tarea {startedAt ? formatStopwatchTime(startedAt) : "--:--"}</span>
+            <span>Fin de tarea {finishedAt ? formatStopwatchTime(finishedAt) : isRunning ? "En curso" : "--:--"}</span>
+          </div>
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 md:justify-end">
+        <Button className="h-9" disabled={isRunning} size="sm" type="button" variant={hasTiming ? "outline" : "default"} onClick={onStart}>
+          <Play className="mr-2 h-4 w-4" />
+          Iniciar
+        </Button>
+        <Button className="h-9" disabled={!isRunning} size="sm" type="button" variant="outline" onClick={onFinish}>
+          <Square className="mr-2 h-4 w-4" />
+          Finalizar
+        </Button>
+        <Button className="h-9" disabled={!hasTiming} size="sm" type="button" variant="ghost" onClick={onReset}>
+          <RotateCcw className="mr-2 h-4 w-4" />
+          Reiniciar
+        </Button>
       </div>
     </div>
   );
@@ -688,6 +991,9 @@ function WorklogDay({
         <div className="flex flex-wrap items-center gap-2 md:justify-end">
           <Badge variant="outline">{formatMinutes(group.totalMinutes)} trabajadas</Badge>
           {group.overtimeMinutes > 0 ? <Badge variant="warning">{formatMinutes(group.overtimeMinutes)} extras</Badge> : null}
+          {group.kindBreakdown.slice(0, 2).map((item) => (
+            <CategoryKindBadge key={item.kind} compact kind={item.kind} suffix={formatMinutes(item.minutes)} />
+          ))}
         </div>
       </button>
       {expanded ? (
@@ -744,6 +1050,7 @@ const EditableEntryRow = memo(function EditableEntryRow({
       ...projects
     ];
   }, [entry, projects]);
+  const selectedCategory = useMemo(() => categories.find((category) => category.id === draft.categoryId), [categories, draft.categoryId]);
 
   useEffect(() => {
     draftRef.current = draft;
@@ -827,7 +1134,7 @@ const EditableEntryRow = memo(function EditableEntryRow({
 
   return (
     <div className={cn("grid gap-1 px-3 py-2 text-sm transition-colors hover:bg-muted/30", status === "saving" && "bg-amber-500/5")}>
-      <div className="grid gap-1 md:grid-cols-[140px_minmax(0,1fr)_190px]">
+      <div className="grid gap-1 md:grid-cols-[140px_minmax(0,1fr)_190px_auto]">
         <Input className="h-8 text-xs" type="date" value={draft.date} onChange={(event) => updateDraft("date", event.target.value)} onKeyDown={onKeyDown} />
         <Select className="h-8 text-xs" value={draft.projectId} onChange={(event) => updateDraft("projectId", event.target.value)} onKeyDown={onKeyDown}>
           {projectOptions.map((project) => (
@@ -839,10 +1146,11 @@ const EditableEntryRow = memo(function EditableEntryRow({
         <Select className="h-8 text-xs" value={draft.categoryId} onChange={(event) => updateDraft("categoryId", event.target.value)} onKeyDown={onKeyDown}>
           {categories.map((category) => (
             <option key={category.id} value={category.id}>
-              {category.name}
+              {category.name} - {getCategoryKindMeta(category.kind).label}
             </option>
           ))}
         </Select>
+        {selectedCategory ? <CategoryKindBadge compact kind={selectedCategory.kind} /> : null}
       </div>
       <div className="grid gap-1 md:grid-cols-[minmax(0,1fr)_minmax(180px,0.45fr)]">
         <Input className="h-8 text-xs" value={draft.detail} onChange={(event) => updateDraft("detail", event.target.value)} onKeyDown={onKeyDown} />
@@ -888,6 +1196,7 @@ function HistoryModal({
   const [query, setQuery] = useState("");
   const [projectId, setProjectId] = useState("ALL");
   const [categoryId, setCategoryId] = useState("ALL");
+  const [categoryKind, setCategoryKind] = useState<"ALL" | CategoryKindKey>("ALL");
   const [date, setDate] = useState("");
   const [sort, setSort] = useState<"desc" | "asc">("desc");
   const [visibleCount, setVisibleCount] = useState(80);
@@ -902,19 +1211,20 @@ function HistoryModal({
         entry.client.toLowerCase().includes(deferredQuery);
       const matchesProject = projectId === "ALL" || entry.projectId === projectId;
       const matchesCategory = categoryId === "ALL" || entry.categoryId === categoryId;
+      const matchesKind = categoryKind === "ALL" || entry.categoryKind === categoryKind;
       const matchesDate = !date || entry.date.slice(0, 10) === date;
 
-      return matchesText && matchesProject && matchesCategory && matchesDate;
+      return matchesText && matchesProject && matchesCategory && matchesKind && matchesDate;
     });
 
     return [...list].sort((a, b) => (sort === "desc" ? b.date.localeCompare(a.date) : a.date.localeCompare(b.date)));
-  }, [categoryId, date, deferredQuery, entries, projectId, sort]);
+  }, [categoryId, categoryKind, date, deferredQuery, entries, projectId, sort]);
   const visibleEntries = filteredEntries.slice(0, visibleCount);
   const groups = useMemo(() => groupEntriesByDay(visibleEntries, sort), [sort, visibleEntries]);
 
   useEffect(() => {
     setVisibleCount(80);
-  }, [categoryId, date, deferredQuery, projectId, sort]);
+  }, [categoryId, categoryKind, date, deferredQuery, projectId, sort]);
 
   useEffect(() => {
     function onKeyDown(event: globalThis.KeyboardEvent) {
@@ -938,7 +1248,7 @@ function HistoryModal({
           </Button>
         </header>
 
-        <div className="grid gap-2 border-b bg-card/80 p-3 md:grid-cols-[minmax(220px,1fr)_180px_180px_150px_130px]">
+        <div className="grid gap-2 border-b bg-card/80 p-3 md:grid-cols-[minmax(220px,1fr)_180px_180px_170px_150px_130px]">
           <div className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input className="h-9 pl-8" placeholder="Buscar" value={query} onChange={(event) => setQuery(event.target.value)} />
@@ -956,6 +1266,14 @@ function HistoryModal({
             {categories.map((category) => (
               <option key={category.id} value={category.id}>
                 {category.name}
+              </option>
+            ))}
+          </Select>
+          <Select className="h-9" value={categoryKind} onChange={(event) => setCategoryKind(event.target.value as "ALL" | CategoryKindKey)}>
+            <option value="ALL">Tipo</option>
+            {categoryKindValues.map((kind) => (
+              <option key={kind} value={kind}>
+                {categoryKindMeta[kind].label}
               </option>
             ))}
           </Select>
@@ -1033,6 +1351,7 @@ type WorklogGroup = {
   entryCount: number;
   totalMinutes: number;
   overtimeMinutes: number;
+  kindBreakdown: Array<{ kind: string; minutes: number }>;
   entries: EntryRow[];
 };
 
@@ -1050,6 +1369,7 @@ function groupEntriesByDay(entries: EntryRow[], sort: "desc" | "asc" = "desc"): 
         entryCount: 0,
         totalMinutes: 0,
         overtimeMinutes: 0,
+        kindBreakdown: [],
         entries: []
       } satisfies WorklogGroup);
 
@@ -1057,10 +1377,39 @@ function groupEntriesByDay(entries: EntryRow[], sort: "desc" | "asc" = "desc"): 
     current.totalMinutes += entry.minutes;
     current.overtimeMinutes += entry.overtimeMinutes;
     current.entries.push(entry);
+    const kind = entry.categoryKind || "PRODUCTIVE";
+    const kindRow = current.kindBreakdown.find((item) => item.kind === kind);
+    if (kindRow) kindRow.minutes += entry.minutes + entry.overtimeMinutes;
+    else current.kindBreakdown.push({ kind, minutes: entry.minutes + entry.overtimeMinutes });
     map.set(key, current);
   }
 
-  return Array.from(map.values()).sort((a, b) => (sort === "desc" ? b.key.localeCompare(a.key) : a.key.localeCompare(b.key)));
+  return Array.from(map.values())
+    .map((group) => ({ ...group, kindBreakdown: [...group.kindBreakdown].sort((a, b) => b.minutes - a.minutes) }))
+    .sort((a, b) => (sort === "desc" ? b.key.localeCompare(a.key) : a.key.localeCompare(b.key)));
+}
+
+function buildCategoryKindStats(entries: EntryRow[], categoryById: Map<string, CategoryOption>) {
+  const totals = new Map<string, { kind: string; minutes: number; entries: number }>();
+
+  for (const kind of categoryKindValues) {
+    totals.set(kind, { kind, minutes: 0, entries: 0 });
+  }
+
+  for (const entry of entries) {
+    const kind = categoryById.get(entry.categoryId)?.kind ?? entry.categoryKind ?? "PRODUCTIVE";
+    const current = totals.get(kind) ?? { kind, minutes: 0, entries: 0 };
+    current.minutes += entry.minutes + entry.overtimeMinutes;
+    current.entries += 1;
+    totals.set(kind, current);
+  }
+
+  const totalMinutes = Math.max(1, Array.from(totals.values()).reduce((sum, item) => sum + item.minutes, 0));
+
+  return Array.from(totals.values()).map((item) => ({
+    ...item,
+    percent: Math.round((item.minutes / totalMinutes) * 100)
+  }));
 }
 
 function entryToDraft(entry: EntryRow): FormState {
@@ -1108,4 +1457,46 @@ function minutesInputToMinutes(value: string, allowZero = false) {
   if (!Number.isFinite(minutes) || !Number.isInteger(minutes)) return null;
   if (allowZero) return minutes >= 0 ? minutes : null;
   return minutes > 0 ? minutes : null;
+}
+
+function elapsedMsToMinutes(elapsedMs: number) {
+  if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) return 0;
+  return Math.max(1, Math.round(elapsedMs / 60_000));
+}
+
+function formatStopwatchDuration(elapsedMs: number) {
+  const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  return [hours, minutes, seconds].map((part) => part.toString().padStart(2, "0")).join(":");
+}
+
+function formatStopwatchTime(timestamp: number) {
+  return new Date(timestamp).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" });
+}
+
+function buildStopwatchStartLine(timestamp: number) {
+  return `Inicio de tarea: ${formatStopwatchTime(timestamp)}`;
+}
+
+function buildStopwatchFinishLine(timestamp: number) {
+  return `Fin de tarea: ${formatStopwatchTime(timestamp)}`;
+}
+
+function appendObservationLines(current: string, lines: string[]) {
+  const trimmed = current.trim();
+  const uniqueLines = lines.filter((line) => line && !trimmed.includes(line));
+  if (!uniqueLines.length) return current;
+
+  const next = [trimmed, ...uniqueLines].filter(Boolean).join("\n");
+  if (next.length <= 800) return next;
+
+  const fallback = uniqueLines.join("\n");
+  return fallback.length <= 800 ? fallback : current;
+}
+
+function toTimestamp(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
 }

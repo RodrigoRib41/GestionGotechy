@@ -34,14 +34,14 @@ const getTimeEntryCatalogs = unstable_cache(
       }),
       prisma.category.findMany({
         where: { active: true },
-        select: { id: true, name: true, color: true },
+        select: { id: true, name: true, color: true, kind: true, description: true },
         orderBy: { name: "asc" }
       })
     ]);
 
     return { projects, categories };
   },
-  ["time-entry-catalogs-v3"],
+  ["time-entry-catalogs-v4"],
   { revalidate: 300, tags: ["time-entry-context"] }
 );
 
@@ -82,7 +82,7 @@ export async function getTimeEntryContext() {
           categoryId: true,
           project: { select: { name: true } },
           client: { select: { name: true } },
-          category: { select: { name: true } },
+          category: { select: { name: true, kind: true } },
           user: { select: { name: true, email: true } }
         },
         orderBy: [{ date: "desc" }, { updatedAt: "desc" }]
@@ -99,7 +99,7 @@ export async function getTimeEntryContext() {
           projectId: true,
           categoryId: true,
           project: { select: { id: true, name: true, client: { select: { id: true, name: true } } } },
-          category: { select: { id: true, name: true } }
+          category: { select: { id: true, name: true, kind: true } }
         },
         orderBy: { updatedAt: "desc" },
         take: 5
@@ -194,7 +194,13 @@ export async function getTimeEntryContext() {
           ? monthlyTotalsByProject.get(project.id) ?? 0
           : totalsByProject.get(project.id) ?? 0
       })),
-      categories: categories.map((category) => ({ id: category.id, name: category.name, color: category.color })),
+      categories: categories.map((category) => ({
+        id: category.id,
+        name: category.name,
+        color: category.color,
+        kind: category.kind,
+        description: category.description
+      })),
       favorites: favorites.map((favorite) => ({
         id: favorite.id,
         name: favorite.name,
@@ -206,7 +212,8 @@ export async function getTimeEntryContext() {
         categoryId: favorite.categoryId,
         project: favorite.project.name,
         client: favorite.project.client.name,
-        category: favorite.category.name
+        category: favorite.category.name,
+        categoryKind: favorite.category.kind
       })),
       personalMetrics: {
         todayPercent: Math.round((todayMinutes / dailyExpected) * 100),
@@ -239,6 +246,7 @@ export async function getTimeEntryContext() {
         clientId: entry.clientId,
         category: entry.category.name,
         categoryId: entry.categoryId,
+        categoryKind: entry.category.kind,
         detail: entry.detail,
         observations: entry.observations,
         minutes: entry.minutes,

@@ -2,6 +2,7 @@
 
 import { format, startOfWeek } from "date-fns";
 import {
+  Archive,
   BarChart3,
   CalendarDays,
   CheckCircle2,
@@ -15,20 +16,25 @@ import {
   RotateCcw,
   Save,
   Search,
-  TimerReset
+  TimerReset,
+  Trash2
 } from "lucide-react";
-import { useDeferredValue, useEffect, useMemo, useState, useTransition } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import {
   addTrackingComment,
+  archiveTrackingTask,
   changeTrackingTaskStatus,
   createTrackingTask,
+  deleteTrackingTask,
   deleteTrackingStatus,
   logTrackingExport,
   logTrackingTaskTime,
   patchTrackingTask,
+  restoreTrackingTask,
   upsertTrackingStatus
 } from "@/lib/actions/tracking-actions";
 import { cn, formatMinutes } from "@/lib/utils";
@@ -36,6 +42,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -63,6 +70,8 @@ type TrackingTask = {
   createdAt: string;
   updatedAt: string;
   closedAt: string | null;
+  archivedAt: string | null;
+  deletedAt: string | null;
   client: { id: string; name: string };
   project: { id: string; name: string };
   assignee: { id: string; name: string; email: string };
@@ -107,6 +116,7 @@ export function TrackingClient({ data }: { data: TrackingData }) {
     assigneeId: "ALL",
     statusId: "ALL",
     priority: "ALL",
+    lifecycle: "ACTIVE",
     date: ""
   });
   const deferredQuery = useDeferredValue(filters.q.trim().toLowerCase());
@@ -125,10 +135,16 @@ export function TrackingClient({ data }: { data: TrackingData }) {
           .toLowerCase()
           .includes(deferredQuery);
       const dateHit = !filters.date || task.dueDate?.slice(0, 10) === filters.date || task.createdAt.slice(0, 10) === filters.date;
+      const lifecycleHit =
+        filters.lifecycle === "ALL" ||
+        (filters.lifecycle === "ACTIVE" && !task.archivedAt && !task.deletedAt) ||
+        (filters.lifecycle === "ARCHIVED" && Boolean(task.archivedAt) && !task.deletedAt) ||
+        (filters.lifecycle === "DELETED" && Boolean(task.deletedAt));
 
       return (
         queryHit &&
         dateHit &&
+        lifecycleHit &&
         (filters.clientId === "ALL" || task.client.id === filters.clientId) &&
         (filters.projectId === "ALL" || task.project.id === filters.projectId) &&
         (filters.assigneeId === "ALL" || task.assignee.id === filters.assigneeId) &&
@@ -367,6 +383,21 @@ export function TrackingClient({ data }: { data: TrackingData }) {
           history={history.filter((item) => item.taskId === selectedTask.id)}
           onClose={() => setSelectedTaskId(null)}
           onComment={(item) => setHistory((current) => [item, ...current])}
+          onLifecycleChanged={(taskId, lifecycle) => {
+            setTasks((current) =>
+              current.map((task) =>
+                task.id === taskId
+                  ? {
+                      ...task,
+                      archivedAt: lifecycle === "ARCHIVED" ? new Date().toISOString() : lifecycle === "ACTIVE" ? null : task.archivedAt,
+                      deletedAt: lifecycle === "DELETED" ? new Date().toISOString() : lifecycle === "ACTIVE" ? null : task.deletedAt,
+                      updatedAt: new Date().toISOString()
+                    }
+                  : task
+              )
+            );
+            router.refresh();
+          }}
           onPatched={() => router.refresh()}
           onTimeLogged={(minutes, item) => {
             setTasks((current) => current.map((task) => (task.id === selectedTask.id ? { ...task, consumedMinutes: task.consumedMinutes + minutes } : task)));
@@ -446,10 +477,10 @@ function TrackingFilters({
   projects: TrackingData["projects"];
   users: TrackingData["users"];
   statuses: TrackingData["statuses"];
-  onChange: (key: "q" | "clientId" | "projectId" | "assigneeId" | "statusId" | "priority" | "date", value: string) => void;
+  onChange: (key: "q" | "clientId" | "projectId" | "assigneeId" | "statusId" | "priority" | "lifecycle" | "date", value: string) => void;
 }) {
   return (
-    <section className="grid gap-2 rounded-lg border bg-card p-3 shadow-sm md:grid-cols-2 xl:grid-cols-[minmax(240px,1fr)_160px_180px_180px_160px_140px_150px]">
+    <section className="grid gap-2 rounded-lg border bg-card p-3 shadow-sm md:grid-cols-2 xl:grid-cols-[minmax(240px,1fr)_150px_170px_170px_150px_130px_150px_140px]">
       <div className="relative">
         <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
         <Input className="h-9 pl-8" placeholder="Buscar tarea, etiqueta o descripcion" value={filters.q} onChange={(event) => onChange("q", event.target.value)} />
@@ -493,6 +524,12 @@ function TrackingFilters({
             {label}
           </option>
         ))}
+      </Select>
+      <Select className="h-9" value={filters.lifecycle} onChange={(event) => onChange("lifecycle", event.target.value)}>
+        <option value="ACTIVE">Activas</option>
+        <option value="ARCHIVED">Archivadas</option>
+        <option value="DELETED">Eliminadas</option>
+        <option value="ALL">Todas</option>
       </Select>
       <Input className="h-9" type="date" value={filters.date} onChange={(event) => onChange("date", event.target.value)} />
     </section>
@@ -564,46 +601,66 @@ function TaskCreator({
       </div>
       {open ? (
         <div className="mt-3 grid gap-2 lg:grid-cols-[1fr_1fr_160px_160px]">
-          <Input className="h-9 lg:col-span-2" placeholder="Titulo" value={draft.title} onChange={(event) => update("title", event.target.value)} />
-          <Select className="h-9" value={draft.clientId} onChange={(event) => update("clientId", event.target.value)}>
-            {clients.map((client) => (
-              <option key={client.id} value={client.id}>
-                {client.name}
-              </option>
-            ))}
-          </Select>
-          <Select className="h-9" value={draft.projectId} onChange={(event) => update("projectId", event.target.value)}>
-            {availableProjects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.name}
-              </option>
-            ))}
-          </Select>
-          <Textarea className="lg:col-span-2" placeholder="Descripcion" value={draft.description} onChange={(event) => update("description", event.target.value)} />
-          <Select className="h-9" value={draft.assigneeId} onChange={(event) => update("assigneeId", event.target.value)}>
-            {users.map((user) => (
-              <option key={user.id} value={user.id}>
-                {user.name}
-              </option>
-            ))}
-          </Select>
-          <Select className="h-9" value={draft.statusId} onChange={(event) => update("statusId", event.target.value)}>
-            {statuses.map((status) => (
-              <option key={status.id} value={status.id}>
-                {status.name}
-              </option>
-            ))}
-          </Select>
-          <Select className="h-9" value={draft.priority} onChange={(event) => update("priority", event.target.value)}>
-            {Object.entries(priorityLabels).map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </Select>
-          <Input className="h-9" type="date" value={draft.dueDate} onChange={(event) => update("dueDate", event.target.value)} />
-          <Input className="h-9" min={0} step={15} type="number" value={draft.estimatedMinutes} onChange={(event) => update("estimatedMinutes", event.target.value)} />
-          <Input className="h-9" placeholder="Etiquetas separadas por coma" value={draft.tags} onChange={(event) => update("tags", event.target.value)} />
+          <TrackingFormField className="lg:col-span-2" helper="Resumen concreto de lo que debe completarse." label="Titulo">
+            <Input className="h-9" placeholder="Ej: Revisar jobs nocturnos" value={draft.title} onChange={(event) => update("title", event.target.value)} />
+          </TrackingFormField>
+          <TrackingFormField helper="Cliente relacionado con la tarea." label="Cliente">
+            <Select className="h-9" value={draft.clientId} onChange={(event) => update("clientId", event.target.value)}>
+              {clients.map((client) => (
+                <option key={client.id} value={client.id}>
+                  {client.name}
+                </option>
+              ))}
+            </Select>
+          </TrackingFormField>
+          <TrackingFormField helper="Proyecto relacionado con la tarea." label="Proyecto">
+            <Select className="h-9" value={draft.projectId} onChange={(event) => update("projectId", event.target.value)}>
+              {availableProjects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </Select>
+          </TrackingFormField>
+          <TrackingFormField className="lg:col-span-2" helper="Contexto, alcance, criterio de finalizacion o bloqueo conocido." label="Descripcion">
+            <Textarea placeholder="Describe el objetivo, entregable esperado y contexto relevante" value={draft.description} onChange={(event) => update("description", event.target.value)} />
+          </TrackingFormField>
+          <TrackingFormField helper="Usuario responsable de completar la tarea." label="Colaborador">
+            <Select className="h-9" value={draft.assigneeId} onChange={(event) => update("assigneeId", event.target.value)}>
+              {users.map((user) => (
+                <option key={user.id} value={user.id}>
+                  {user.name}
+                </option>
+              ))}
+            </Select>
+          </TrackingFormField>
+          <TrackingFormField helper="Estado inicial dentro del flujo." label="Estado">
+            <Select className="h-9" value={draft.statusId} onChange={(event) => update("statusId", event.target.value)}>
+              {statuses.map((status) => (
+                <option key={status.id} value={status.id}>
+                  {status.name}
+                </option>
+              ))}
+            </Select>
+          </TrackingFormField>
+          <TrackingFormField helper="Define el nivel de urgencia de la tarea." label="Prioridad">
+            <Select className="h-9" value={draft.priority} onChange={(event) => update("priority", event.target.value)}>
+              {Object.entries(priorityLabels).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </Select>
+          </TrackingFormField>
+          <TrackingFormField helper="Fecha objetivo o compromiso interno." label="Vencimiento">
+            <Input className="h-9" type="date" value={draft.dueDate} onChange={(event) => update("dueDate", event.target.value)} />
+          </TrackingFormField>
+          <TrackingFormField helper="Cantidad estimada de minutos." label="Tiempo estimado">
+            <Input className="h-9" min={0} step={15} type="number" value={draft.estimatedMinutes} onChange={(event) => update("estimatedMinutes", event.target.value)} />
+          </TrackingFormField>
+          <TrackingFormField helper="Palabras clave separadas por coma." label="Etiquetas">
+            <Input className="h-9" placeholder="basis, reporte, urgente" value={draft.tags} onChange={(event) => update("tags", event.target.value)} />
+          </TrackingFormField>
           <Button className="h-9" disabled={isPending} onClick={submit}>
             <Save className="mr-2 h-4 w-4" />
             Guardar tarea
@@ -611,6 +668,26 @@ function TaskCreator({
         </div>
       ) : null}
     </section>
+  );
+}
+
+function TrackingFormField({
+  label,
+  helper,
+  className,
+  children
+}: {
+  label: string;
+  helper: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className={cn("space-y-1", className)}>
+      <Label className="text-xs font-medium">{label}</Label>
+      {children}
+      <p className="text-[11px] text-muted-foreground">{helper}</p>
+    </div>
   );
 }
 
@@ -651,7 +728,7 @@ function KanbanView({
               </div>
               <div className="space-y-2 p-2">
                 {columnTasks.map((task) => (
-                  <TaskCard key={task.id} draggable onDragStart={() => onDragStart(task.id)} onSelect={onSelect} task={task} />
+                  <TaskCard key={task.id} draggable={!task.archivedAt && !task.deletedAt} onDragStart={() => onDragStart(task.id)} onSelect={onSelect} task={task} />
                 ))}
               </div>
             </section>
@@ -694,6 +771,7 @@ function TaskCard({
       </div>
       <div className="mt-3 flex flex-wrap gap-1">
         <Badge variant="outline">{task.assignee.name}</Badge>
+        <LifecycleBadge task={task} />
         {flags.overdue ? <Badge variant="destructive">Vencida</Badge> : null}
         {flags.dueSoon ? <Badge variant="warning">Proxima</Badge> : null}
         {flags.blocked ? <Badge variant="warning">Bloqueada</Badge> : null}
@@ -749,7 +827,7 @@ function ListView({
                 </td>
                 <td className="px-3 py-2 text-xs">{task.assignee.name}</td>
                 <td className="px-3 py-2">
-                  <Select className="h-8 text-xs" value={task.status.id} onChange={(event) => {
+                  <Select className="h-8 text-xs" disabled={Boolean(task.archivedAt || task.deletedAt)} value={task.status.id} onChange={(event) => {
                     const status = statuses.find((item) => item.id === event.target.value);
                     if (status) onMove(task.id, status);
                   }}>
@@ -762,6 +840,7 @@ function ListView({
                 </td>
                 <td className="px-3 py-2">
                   <Badge variant={priorityVariants[task.priority as Priority]}>{priorityLabels[task.priority as Priority]}</Badge>
+                  <div className="mt-1"><LifecycleBadge task={task} /></div>
                 </td>
                 <td className="px-3 py-2 text-xs">
                   {task.dueDate ? formatDate(task.dueDate) : "-"}
@@ -967,6 +1046,7 @@ function TaskDetailPanel({
   canManage,
   onClose,
   onComment,
+  onLifecycleChanged,
   onTimeLogged,
   onPatched
 }: {
@@ -979,6 +1059,7 @@ function TaskDetailPanel({
   canManage: boolean;
   onClose: () => void;
   onComment: (item: TrackingHistory) => void;
+  onLifecycleChanged: (taskId: string, lifecycle: "ACTIVE" | "ARCHIVED" | "DELETED") => void;
   onTimeLogged: (minutes: number, item: TrackingHistory) => void;
   onPatched: () => void;
 }) {
@@ -997,8 +1078,31 @@ function TaskDetailPanel({
     estimatedMinutes: String(task.estimatedMinutes),
     tags: task.tags.join(", ")
   });
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const autosaveSignatureRef = useRef(JSON.stringify(draft));
   const [isPending, startTransition] = useTransition();
   const availableProjects = projects.filter((project) => project.clientId === draft.clientId);
+
+  useEffect(() => {
+    if (!canManage || task.deletedAt) return;
+    const signature = JSON.stringify(draft);
+    if (signature === autosaveSignatureRef.current) return;
+
+    setSaveState("saving");
+    const timer = window.setTimeout(async () => {
+      const result = await patchTrackingTask({ ...draft, id: task.id, estimatedMinutes: Number(draft.estimatedMinutes) });
+      if (result.ok) {
+        autosaveSignatureRef.current = signature;
+        setSaveState("saved");
+        window.setTimeout(() => setSaveState("idle"), 1200);
+      } else {
+        setSaveState("error");
+        toast.error(result.message);
+      }
+    }, 900);
+
+    return () => window.clearTimeout(timer);
+  }, [canManage, draft, task.deletedAt, task.id]);
 
   function submitComment() {
     startTransition(async () => {
@@ -1055,6 +1159,35 @@ function TaskDetailPanel({
     });
   }
 
+  function changeLifecycle(action: "ARCHIVE" | "DELETE" | "RESTORE") {
+    const question =
+      action === "DELETE"
+        ? "Esta accion mueve la tarea a eliminadas y conserva auditoria. ¿Continuar?"
+        : action === "ARCHIVE"
+          ? "¿Archivar esta tarea?"
+          : "¿Restaurar esta tarea?";
+
+    if (!window.confirm(question)) return;
+
+    startTransition(async () => {
+      const result =
+        action === "ARCHIVE"
+          ? await archiveTrackingTask(task.id)
+          : action === "DELETE"
+            ? await deleteTrackingTask(task.id)
+            : await restoreTrackingTask(task.id);
+
+      if (!result.ok) {
+        toast.error(result.message);
+        return;
+      }
+
+      toast.success(result.message);
+      onLifecycleChanged(task.id, action === "ARCHIVE" ? "ARCHIVED" : action === "DELETE" ? "DELETED" : "ACTIVE");
+      if (action === "DELETE") onClose();
+    });
+  }
+
   return (
     <div className="fixed inset-0 z-50 bg-black/35" onClick={onClose}>
       <aside className="ml-auto h-full w-full max-w-2xl overflow-y-auto bg-background p-4 shadow-xl" onClick={(event) => event.stopPropagation()}>
@@ -1070,6 +1203,10 @@ function TaskDetailPanel({
           <Metric label="Prioridad" value={priorityLabels[task.priority as Priority]} />
           <Metric label="Estimado" value={formatMinutes(task.estimatedMinutes)} />
           <Metric label="Consumido" value={formatMinutes(task.consumedMinutes)} />
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <LifecycleBadge task={task} />
+          {task.dueDate ? <Badge variant={getTaskFlags(task).overdue ? "destructive" : "outline"}>Vence {formatDate(task.dueDate)}</Badge> : null}
         </div>
         <p className="mt-4 rounded-md border bg-card p-3 text-sm">{task.description}</p>
 
@@ -1099,7 +1236,12 @@ function TaskDetailPanel({
 
         {canManage ? (
           <Card className="mt-4">
-            <CardHeader className="p-3 pb-0"><CardTitle className="text-sm">Editar tarea</CardTitle></CardHeader>
+            <CardHeader className="flex-row items-center justify-between p-3 pb-0">
+              <CardTitle className="text-sm">Editar tarea</CardTitle>
+              <span className={cn("text-xs text-muted-foreground", saveState === "error" && "text-destructive", saveState === "saved" && "text-emerald-600")}>
+                {saveState === "saving" ? "Guardando..." : saveState === "saved" ? "Guardado" : saveState === "error" ? "Error al guardar" : "Autosave activo"}
+              </span>
+            </CardHeader>
             <CardContent className="grid gap-2 p-3 sm:grid-cols-2">
               <Input className="sm:col-span-2" value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} />
               <Textarea className="sm:col-span-2" value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} />
@@ -1125,6 +1267,25 @@ function TaskDetailPanel({
               <Input min={0} step={15} type="number" value={draft.estimatedMinutes} onChange={(event) => setDraft({ ...draft, estimatedMinutes: event.target.value })} />
               <Input value={draft.tags} onChange={(event) => setDraft({ ...draft, tags: event.target.value })} placeholder="Etiquetas" />
               <Button className="sm:col-span-2" disabled={isPending} onClick={saveEdit}>Guardar cambios</Button>
+              <div className="flex flex-wrap gap-2 border-t pt-3 sm:col-span-2">
+                {task.archivedAt || task.deletedAt ? (
+                  <Button disabled={isPending} size="sm" variant="outline" onClick={() => changeLifecycle("RESTORE")}>
+                    <RotateCcw className="mr-2 h-4 w-4" />
+                    Restaurar
+                  </Button>
+                ) : (
+                  <Button disabled={isPending} size="sm" variant="outline" onClick={() => changeLifecycle("ARCHIVE")}>
+                    <Archive className="mr-2 h-4 w-4" />
+                    Archivar
+                  </Button>
+                )}
+                {!task.deletedAt ? (
+                  <Button disabled={isPending} size="sm" variant="destructive" onClick={() => changeLifecycle("DELETE")}>
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Eliminar
+                  </Button>
+                ) : null}
+              </div>
             </CardContent>
           </Card>
         ) : null}
@@ -1156,6 +1317,12 @@ function Metric({ label, value, tone = "default" }: { label: string; value: stri
       <div className="mt-1 truncate text-lg font-semibold">{value}</div>
     </div>
   );
+}
+
+function LifecycleBadge({ task }: { task: TrackingTask }) {
+  if (task.deletedAt) return <Badge variant="destructive">Eliminada</Badge>;
+  if (task.archivedAt) return <Badge variant="muted">Archivada</Badge>;
+  return <Badge variant="success">Activa</Badge>;
 }
 
 function buildDashboard(tasks: TrackingTask[], statuses: TrackingStatus[]) {

@@ -197,6 +197,27 @@ export const reportDeleteSchema = reportDeletePreviewSchema.extend({
   confirmation: z.string().transform((value) => value.trim().toUpperCase())
 });
 
+export const timeImportRowSchema = z.object({
+  rowNumber: z.coerce.number().int().min(1),
+  collaborator: z.string().min(1).max(160),
+  date: z.string().min(1),
+  client: z.string().max(160).optional(),
+  project: z.string().min(1).max(160),
+  category: z.string().max(120).optional(),
+  detail: z.string().min(1).max(500),
+  minutes: z.union([z.number(), z.string()]).transform((value) => Number(value)),
+  overtimeMinutes: z.union([z.number(), z.string()]).optional().transform((value) => Number(value ?? 0))
+});
+
+export const timeImportPreviewSchema = z.object({
+  rows: z.array(timeImportRowSchema).min(1, "No hay filas para importar").max(10_000, "El archivo supera el maximo de 10000 filas")
+});
+
+export const timeImportCommitSchema = timeImportPreviewSchema.extend({
+  fileName: z.string().max(220).optional(),
+  autoCreateMissing: z.coerce.boolean().default(false)
+});
+
 export const auditFilterSchema = z.object({
   from: z.string().optional(),
   to: z.string().optional(),

@@ -139,6 +139,7 @@ model User {
   createdTrackingTasks  TrackingTask[] @relation("TrackingTaskCreator")
   trackingHistory       TrackingTaskHistory[]
   trackingAttachments   TrackingTaskAttachment[]
+  timeImportBatches     TimeImportBatch[]
   dashboardPreferences  UserDashboardPreference[]
   ownedGoals            GoalObjective[] @relation("GoalOwner")
   goalExclusions        GoalObjectiveExclusion[]
@@ -349,6 +350,27 @@ model TimeEntryFavorite {
   @@unique([userId, projectId, categoryId, detail, minutes, overtimeMinutes])
 }
 
+model TimeImportBatch {
+  id              String   @id @default(cuid())
+  fileName        String?
+  source          String   @default("REPORTS_IMPORT")
+  totalRows       Int      @default(0)
+  validRows       Int      @default(0)
+  invalidRows     Int      @default(0)
+  duplicateRows   Int      @default(0)
+  importedRows    Int      @default(0)
+  skippedRows     Int      @default(0)
+  errors          Json?
+  createdProjects Json?
+  createdClients  Json?
+  importedById    String?
+  createdAt       DateTime @default(now())
+  importedBy      User?    @relation(fields: [importedById], references: [id], onDelete: SetNull)
+
+  @@index([importedById, createdAt])
+  @@index([createdAt])
+}
+
 model UserDashboardPreference {
   id          String   @id @default(cuid())
   userId      String
@@ -545,6 +567,10 @@ model TrackingTask {
   tags             String[]             @default([])
   attachmentMeta   Json?
   closedAt         DateTime?
+  archivedAt       DateTime?
+  archivedById     String?
+  deletedAt        DateTime?
+  deletedById      String?
   createdAt        DateTime             @default(now())
   updatedAt        DateTime             @updatedAt
   clientId         String
@@ -567,6 +593,9 @@ model TrackingTask {
   @@index([dueDate])
   @@index([createdAt])
   @@index([updatedAt])
+  @@index([archivedAt])
+  @@index([deletedAt])
+  @@index([assigneeId, deletedAt, archivedAt])
 }
 
 model TrackingTaskHistory {

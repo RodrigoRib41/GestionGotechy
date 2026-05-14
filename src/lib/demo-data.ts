@@ -42,10 +42,10 @@ export const demoClients = [
 ];
 
 export const demoCategories = [
-  { id: "demo-category-1", name: "Basis", color: "#2563EB" },
-  { id: "demo-category-2", name: "Desarrollo", color: "#16A34A" },
-  { id: "demo-category-3", name: "Gestion", color: "#F97316" },
-  { id: "demo-category-4", name: "Comunicacion interna", color: "#7C3AED" }
+  { id: "demo-category-1", name: "Basis", color: "#2563EB", kind: "PRODUCTIVE", description: "Soporte productivo para cliente" },
+  { id: "demo-category-2", name: "Desarrollo", color: "#16A34A", kind: "PRODUCTIVE", description: "Implementacion y entregables" },
+  { id: "demo-category-3", name: "Gestion", color: "#F97316", kind: "ADMINISTRATIVE", description: "Gestion administrativa y reportes" },
+  { id: "demo-category-4", name: "Comunicacion interna", color: "#7C3AED", kind: "INTERNAL", description: "Coordinacion interna" }
 ];
 
 export const demoTimeEntries = [
@@ -59,6 +59,7 @@ export const demoTimeEntries = [
     clientId: "demo-client-1",
     category: "Comunicacion interna",
     categoryId: "demo-category-4",
+    categoryKind: "INTERNAL",
     detail: "Reunion bienvenida",
     observations: "",
     minutes: 40,
@@ -74,6 +75,7 @@ export const demoTimeEntries = [
     clientId: "demo-client-2",
     category: "Basis",
     categoryId: "demo-category-1",
+    categoryKind: "PRODUCTIVE",
     detail: "Monitoreo y ajustes de jobs",
     observations: "",
     minutes: 180,
@@ -89,6 +91,7 @@ export const demoTimeEntries = [
     clientId: "demo-client-3",
     category: "Desarrollo",
     categoryId: "demo-category-2",
+    categoryKind: "PRODUCTIVE",
     detail: "Integracion de reportes internos",
     observations: "",
     minutes: 240,

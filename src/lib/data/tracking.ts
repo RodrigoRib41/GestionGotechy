@@ -46,6 +46,8 @@ const demoTrackingData = {
       createdAt: subDays(new Date(), 2).toISOString(),
       updatedAt: subDays(new Date(), 1).toISOString(),
       closedAt: null,
+      archivedAt: null,
+      deletedAt: null,
       client: { id: "c1", name: "Cliente Demo" },
       project: { id: "p1", name: "Soporte Demo" },
       assignee: { id: "u1", name: "Sofia Peralta", email: "sofia@gotechy.com" },
@@ -63,6 +65,8 @@ const demoTrackingData = {
       createdAt: subDays(new Date(), 6).toISOString(),
       updatedAt: subDays(new Date(), 4).toISOString(),
       closedAt: null,
+      archivedAt: null,
+      deletedAt: null,
       client: { id: "c2", name: "CARSA" },
       project: { id: "p2", name: "Desarrollo Demo" },
       assignee: { id: "u2", name: "Marcos Vidal", email: "marcos@gotechy.com" },
@@ -95,7 +99,7 @@ export async function getTrackingData() {
 
     const data = await unstable_cache(
       () => buildTrackingData({ userId, globalScope }),
-      ["tracking-data-v1", scopeKey],
+      ["tracking-data-v2", scopeKey],
       { revalidate: 30, tags: ["tracking-data"] }
     )();
 
@@ -112,8 +116,21 @@ export async function getTrackingData() {
   }
 }
 
+export async function hasAssignedTrackingTasks(userId: string) {
+  if (!process.env.DATABASE_URL) return false;
+
+  const count = await prisma.trackingTask.count({
+    where: {
+      assigneeId: userId,
+      deletedAt: null
+    }
+  });
+
+  return count > 0;
+}
+
 async function buildTrackingData({ userId, globalScope }: TrackingScope) {
-  const taskWhere = globalScope ? {} : { assigneeId: userId };
+  const taskWhere = globalScope ? {} : { assigneeId: userId, deletedAt: null };
   const [statuses, clients, projects, users, tasks] = await Promise.all([
     prisma.trackingTaskStatus.findMany({
       select: { id: true, name: true, color: true, active: true, sortOrder: true, isFinal: true, isBlocked: true },
@@ -148,6 +165,8 @@ async function buildTrackingData({ userId, globalScope }: TrackingScope) {
         createdAt: true,
         updatedAt: true,
         closedAt: true,
+        archivedAt: true,
+        deletedAt: true,
         client: { select: { id: true, name: true } },
         project: { select: { id: true, name: true } },
         assignee: { select: { id: true, name: true, email: true } },
@@ -192,6 +211,8 @@ async function buildTrackingData({ userId, globalScope }: TrackingScope) {
       createdAt: task.createdAt.toISOString(),
       updatedAt: task.updatedAt.toISOString(),
       closedAt: task.closedAt?.toISOString() ?? null,
+      archivedAt: task.archivedAt?.toISOString() ?? null,
+      deletedAt: task.deletedAt?.toISOString() ?? null,
       client: task.client,
       project: task.project,
       assignee: { id: task.assignee.id, name: task.assignee.name ?? task.assignee.email, email: task.assignee.email },
