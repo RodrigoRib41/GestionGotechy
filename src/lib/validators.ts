@@ -20,22 +20,10 @@ export const goalMetricKindValues = [
   "CLIENT_MINUTES",
   "CATEGORY_MINUTES"
 ] as const;
-export const auditActionValues = [
-  "CREATE",
-  "UPDATE",
-  "DELETE",
-  "LOGIN",
-  "DENIED_LOGIN",
-  "EXPORT",
-  "ROLE_CHANGE",
-  "STATUS_CHANGE",
-  "CONFIG_CHANGE"
-] as const;
-
 export const timeEntrySchema = z.object({
   date: z.string().min(1, "Selecciona una fecha"),
   projectId: z.string().min(1, "Selecciona un proyecto"),
-  categoryId: z.string().min(1, "Selecciona una categoria"),
+  categoryId: z.string().min(1, "Selecciona una categoría"),
   detail: z.string().min(3, "Agrega un detalle breve").max(500),
   observations: z.string().max(800).optional(),
   minutes: z.coerce.number().int().min(1).max(24 * 60),
@@ -46,7 +34,7 @@ export const timeEntryPatchSchema = z
   .object({
     date: z.string().min(1, "Selecciona una fecha").optional(),
     projectId: z.string().min(1, "Selecciona un proyecto").optional(),
-    categoryId: z.string().min(1, "Selecciona una categoria").optional(),
+    categoryId: z.string().min(1, "Selecciona una categoría").optional(),
     detail: z.string().min(3, "Agrega un detalle breve").max(500).optional(),
     observations: z.string().max(800).optional(),
     minutes: z.coerce.number().int().min(1).max(24 * 60).optional(),
@@ -84,11 +72,37 @@ export const timeEntryFavoriteSchema = z.object({
   id: z.string().optional(),
   name: z.string().min(2).max(80),
   projectId: z.string().min(1, "Selecciona un proyecto"),
-  categoryId: z.string().min(1, "Selecciona una categoria"),
+  categoryId: z.string().min(1, "Selecciona una categoría"),
   detail: z.string().min(3, "Agrega un detalle breve").max(500),
   observations: z.string().max(800).optional(),
   minutes: z.coerce.number().int().min(1).max(24 * 60),
   overtimeMinutes: z.coerce.number().int().min(0).max(12 * 60).default(0)
+});
+
+export const projectVisibilitySchema = z.object({
+  projectIds: z.array(z.string().min(1)).max(500)
+});
+
+export const bulkProjectDeleteSchema = z.object({
+  projectIds: z.array(z.string().min(1)).min(1).max(200)
+});
+
+export const bulkClientDeleteSchema = z.object({
+  clientIds: z.array(z.string().min(1)).min(1).max(200)
+});
+
+export const timeEntryCommentSchema = z.object({
+  timeEntryId: z.string().min(1),
+  message: z.string().min(1, "Escribe un comentario").max(1200)
+});
+
+export const timeEntryThreadReplySchema = z.object({
+  threadId: z.string().min(1),
+  message: z.string().min(1, "Escribe una respuesta").max(1200)
+});
+
+export const timeEntryThreadIdSchema = z.object({
+  threadId: z.string().min(1)
 });
 
 export const allowedEmailSchema = z.object({
@@ -168,6 +182,27 @@ export const trackingTaskStatusChangeSchema = z.object({
   statusId: z.string().min(1)
 });
 
+export const trackingTaskBulkUpdateSchema = z
+  .object({
+    taskIds: z.array(z.string().min(1)).min(1).max(200),
+    statusId: z.string().optional(),
+    assigneeId: z.string().optional(),
+    priority: z.enum(trackingPriorityValues).optional(),
+    dueDate: z.string().optional()
+  })
+  .refine(
+    (value) =>
+      Boolean(value.statusId) ||
+      Boolean(value.assigneeId) ||
+      Boolean(value.priority) ||
+      value.dueDate !== undefined,
+    "Selecciona al menos un cambio"
+  );
+
+export const trackingTaskBulkDeleteSchema = z.object({
+  taskIds: z.array(z.string().min(1)).min(1).max(200)
+});
+
 export const trackingCommentSchema = z.object({
   taskId: z.string().min(1),
   message: z.string().min(1).max(1000)
@@ -190,7 +225,7 @@ export const reportDeletePreviewSchema = z
     from: z.string().optional(),
     to: z.string().optional()
   })
-  .refine((value) => value.mode === "all" || Boolean(value.from && value.to), "Selecciona un rango valido");
+  .refine((value) => value.mode === "all" || Boolean(value.from && value.to), "Selecciona un rango válido");
 
 export const reportDeleteSchema = reportDeletePreviewSchema.extend({
   pin: z.string().min(4).max(32),
@@ -218,27 +253,6 @@ export const timeImportCommitSchema = timeImportPreviewSchema.extend({
   autoCreateMissing: z.coerce.boolean().default(false)
 });
 
-export const auditFilterSchema = z.object({
-  from: z.string().optional(),
-  to: z.string().optional(),
-  actorId: z.string().optional(),
-  action: z.enum(auditActionValues).optional(),
-  entity: z.string().optional()
-});
-
-export const auditDeletePreviewSchema = z
-  .object({
-    mode: z.enum(["all", "range"]).default("range"),
-    from: z.string().optional(),
-    to: z.string().optional()
-  })
-  .refine((value) => value.mode === "all" || Boolean(value.from && value.to), "Selecciona un rango valido");
-
-export const auditDeleteSchema = auditDeletePreviewSchema.extend({
-  pin: z.string().min(4).max(32),
-  confirmation: z.string().transform((value) => value.trim().toUpperCase())
-});
-
 export const disabledUserDeleteSchema = z.object({
   userId: z.string().min(1),
   strategy: z.enum(["PHYSICAL", "ARCHIVE", "SOFT_DELETE", "ANONYMIZE"]),
@@ -252,7 +266,7 @@ export const goalHistoryDeletePreviewSchema = z
     to: z.string().optional(),
     period: z.enum(goalHistoryPeriodValues).optional()
   })
-  .refine((value) => value.mode === "all" || Boolean(value.from && value.to), "Selecciona un rango valido");
+  .refine((value) => value.mode === "all" || Boolean(value.from && value.to), "Selecciona un rango válido");
 
 export const goalHistoryDeleteSchema = goalHistoryDeletePreviewSchema.extend({
   pin: z.string().min(4).max(32),

@@ -13,9 +13,9 @@ type TrackingScope = {
 const demoStatuses = [
   { id: "st-1", name: "Pendiente", color: "#64748B", active: true, sortOrder: 10, isFinal: false, isBlocked: false },
   { id: "st-2", name: "En progreso", color: "#2563EB", active: true, sortOrder: 20, isFinal: false, isBlocked: false },
-  { id: "st-3", name: "Bloqueado", color: "#F97316", active: true, sortOrder: 30, isFinal: false, isBlocked: true },
-  { id: "st-4", name: "En revision", color: "#8B5CF6", active: true, sortOrder: 40, isFinal: false, isBlocked: false },
-  { id: "st-5", name: "Finalizado", color: "#16A34A", active: true, sortOrder: 50, isFinal: true, isBlocked: false }
+  { id: "st-3", name: "Bloqueada", color: "#F97316", active: true, sortOrder: 30, isFinal: false, isBlocked: true },
+  { id: "st-4", name: "Finalizada", color: "#16A34A", active: true, sortOrder: 50, isFinal: true, isBlocked: false },
+  { id: "st-5", name: "Archivada", color: "#64748B", active: true, sortOrder: 60, isFinal: true, isBlocked: false }
 ];
 
 const demoTrackingData = {

@@ -107,7 +107,7 @@ export function DashboardCharts({ data }: { data: DashboardData }) {
     const isPinned = pinnedIds.includes(id);
 
     if (!isPinned && pinnedIds.length >= 6) {
-      toast.error("Solo podes fijar hasta 6 dashboards");
+      toast.error("Solo podés fijar hasta 6 dashboards");
       return;
     }
 
@@ -250,7 +250,7 @@ function getDashboardDefinitions(): DashboardDefinition[] {
     {
       id: "productivity",
       title: "Productividad promedio",
-      subtitle: "Relacion entre categorias productivas y total",
+      subtitle: "Relación entre categorías productivas y total",
       category: "Productividad",
       render: (data) => (
         <>
@@ -309,7 +309,7 @@ function getDashboardDefinitions(): DashboardDefinition[] {
     },
     {
       id: "categories",
-      title: "Distribucion por categorias",
+      title: "Distribución por categorías",
       subtitle: "Peso relativo de cada categoria",
       category: "Productividad",
       render: (data) => <CategoryDistribution data={data} />
@@ -366,7 +366,7 @@ function getDashboardDefinitions(): DashboardDefinition[] {
     {
       id: "active-projects",
       title: "Top proyectos activos",
-      subtitle: "Proyectos activos con mas consumo",
+      subtitle: "Proyectos activos con más consumo",
       category: "Proyectos",
       render: (data) => <RankingList rows={data.topProjectsActive.map((item) => ({ name: item.name, value: item.minutes, helper: item.client }))} />
     }

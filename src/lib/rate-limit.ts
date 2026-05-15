@@ -10,7 +10,7 @@ export function assertRateLimit(key: string, limit = 40, windowMs = 60_000) {
   }
 
   if (bucket.count >= limit) {
-    throw new Error("Demasiadas acciones en poco tiempo. Intentá nuevamente en un minuto.");
+    throw new Error("Demasiadas acciónes en poco tiempo. Intentá nuevamente en un minuto.");
   }
 
   bucket.count += 1;

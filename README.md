@@ -10,21 +10,21 @@ Aplicacion web moderna para reemplazar el Excel manual de registro de horas de G
 - Prisma ORM + PostgreSQL, preparado para Supabase
 - Server Actions, Zod y React Hook Form
 - TanStack Table, Recharts y Lucide Icons
-- Exportaciones CSV, Excel y PDF
+- Exportaciónes CSV, Excel y PDF
 - Vercel/Netlify como deploy serverless
 
 ## Modulos incluidos
 
-- Dashboard ejecutivo con KPIs, rankings, evolucion semanal y distribucion por categoria.
+- Dashboard ejecutivo con KPIs, rankings, evolución semanal y distribución por categoria.
 - Dashboard unificado con dashboards fijados por usuario y activaciones temporales diarias.
 - Registro rapido de horas con favoritos personales, historial agrupado y metricas de disponibilidad.
 - Seguimiento operativo con vistas Kanban/lista/timeline, estados administrables e historial.
 - Objetivos de cumplimiento horario por colaborador, periodo, cliente, proyecto y categoria.
 - Historial persistente de objetivos con limpieza segura por PIN para Superadmin.
 - Gestion de proyectos, clientes, tipos de proyecto y estimaciones.
-- Reporte Maestro de Horas con filtros avanzados, exportacion y borrado seguro para superadmin.
+- Reporte Maestro de Horas con filtros avanzados, exportación y borrado seguro para superadmin.
 - Vista de colaboradores con configuracion laboral.
-- Administracion de usuarios habilitados, roles, categorias, tipos de tarea y auditoria.
+- Administración de usuarios habilitados, roles, categorías y tipos de tarea.
 - Branding Gotechy integrado con logo responsive, favicon y soporte light/dark.
 - Login Google con whitelist de emails y pantalla de acceso denegado.
 
@@ -34,7 +34,7 @@ La app implementa RBAC con estos roles:
 
 - `COLABORADOR`: accede solo a carga de horas y edicion permitida de sus registros.
 - `ADMINISTRADOR`: acceso funcional completo a dashboard global, reportes, clientes, proyectos y seguimiento; sin colaboradores, roles, configuraciones criticas ni borrado historico.
-- `SUPERADMIN`: acceso total, usuarios, roles, configuracion, auditoria y borrado seguro del historial.
+- `SUPERADMIN`: acceso total, usuarios, roles, configuracion y borrado seguro del historial.
 
 Reglas relevantes:
 
@@ -80,12 +80,12 @@ El modelo Prisma incluye:
 - `AllowedEmail`, `WorkSchedule`
 - `Client`, `Project`, `ProjectType`, `ProjectMember`
 - `Category`
-- `TimeEntry`, `TimeEntryFavorite`
+- `TimeEntry`, `TimeEntryFavorite`, `TimeEntryThread`, `TimeEntryComment`, `Notification`
+- `UserProjectVisibility`
 - `UserDashboardPreference`
 - `TrackingTask`, `TrackingTaskStatus`, `TrackingTaskHistory`, `TrackingTaskAttachment`
 - `GoalObjective`, `GoalObjectiveExclusion`, `GoalMetric`, `GoalCompliance`
 - `GoalComplianceHistory`
-- `AuditLog`
 
 Las nuevas tablas publicas tienen RLS habilitado para Supabase. La app opera via servidor Next.js + Prisma, por lo que las reglas de negocio viven en Server Actions, middleware y helpers de permisos.
 
@@ -122,7 +122,7 @@ npm run seed-production
 
 ## Operaciones productivas
 
-Seed minimo sin datos demo:
+Seed mínimo sin datos demo:
 
 ```bash
 npm run seed-production
@@ -155,7 +155,7 @@ src/components
   data          tablas TanStack
   navigation    shell, sidebar y topbar
   objectives    objetivos y cumplimiento
-  reports       reportes/exportaciones
+  reports       reportes/exportaciónes
   resources     clientes y proyectos
   time          registro rapido de horas
   tracking      seguimiento operativo

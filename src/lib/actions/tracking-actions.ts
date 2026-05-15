@@ -1,6 +1,6 @@
 "use server";
 
-import { AuditAction, Role, TrackingHistoryAction, TrackingTaskPriority } from "@prisma/client";
+import { Role, TrackingHistoryAction, TrackingTaskPriority } from "@prisma/client";
 import { revalidatePath, revalidateTag } from "next/cache";
 
 import { prisma } from "@/lib/prisma";
@@ -9,6 +9,8 @@ import { assertRateLimit } from "@/lib/rate-limit";
 import {
   trackingCommentSchema,
   trackingStatusSchema,
+  trackingTaskBulkDeleteSchema,
+  trackingTaskBulkUpdateSchema,
   trackingTaskPatchSchema,
   trackingTaskSchema,
   trackingTaskStatusChangeSchema,
@@ -30,7 +32,7 @@ export async function createTrackingTask(input: unknown) {
   const parsed = trackingTaskSchema.safeParse(input);
 
   if (!parsed.success) {
-    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos invalidos" };
+    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos inválidos" };
   }
 
   const [project, status, assignee] = await Promise.all([
@@ -40,19 +42,19 @@ export async function createTrackingTask(input: unknown) {
   ]);
 
   if (!project || project.clientId !== parsed.data.clientId || project.status !== "ACTIVE") {
-    return { ok: false, message: "El proyecto no pertenece al cliente seleccionado o esta inactivo" };
+    return { ok: false, message: "El proyecto no pertenece al cliente seleccionado o está inactivo" };
   }
 
   if (!status?.active) {
-    return { ok: false, message: "El estado seleccionado no esta activo" };
+    return { ok: false, message: "El estado seleccionado no está activo" };
   }
 
   if (!assignee || assignee.status !== "ACTIVE") {
-    return { ok: false, message: "El responsable seleccionado no esta activo" };
+    return { ok: false, message: "El responsable seleccionado no está activo" };
   }
 
   const dueDate = parsed.data.dueDate ? new Date(`${parsed.data.dueDate}T12:00:00`) : null;
-  const task = await prisma.$transaction(async (tx) => {
+  await prisma.$transaction(async (tx) => {
     const created = await tx.trackingTask.create({
       data: {
         title: parsed.data.title.trim(),
@@ -87,10 +89,6 @@ export async function createTrackingTask(input: unknown) {
     return created;
   });
 
-  await prisma.auditLog.create({
-    data: { action: AuditAction.CREATE, entity: "TrackingTask", entityId: task.id, actorId: session.user.id }
-  });
-
   revalidateTracking();
   return { ok: true, message: "Tarea creada" };
 }
@@ -101,7 +99,7 @@ export async function patchTrackingTask(input: unknown) {
   const parsed = trackingTaskPatchSchema.safeParse(input);
 
   if (!parsed.success) {
-    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos invalidos" };
+    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos inválidos" };
   }
 
   const existing = await prisma.trackingTask.findUnique({
@@ -142,15 +140,15 @@ export async function patchTrackingTask(input: unknown) {
   ]);
 
   if (!project || project.clientId !== clientId || project.status !== "ACTIVE") {
-    return { ok: false, message: "El proyecto no pertenece al cliente seleccionado o esta inactivo" };
+    return { ok: false, message: "El proyecto no pertenece al cliente seleccionado o está inactivo" };
   }
 
   if (!status?.active) {
-    return { ok: false, message: "El estado seleccionado no esta activo" };
+    return { ok: false, message: "El estado seleccionado no está activo" };
   }
 
   if (!assignee || assignee.status !== "ACTIVE") {
-    return { ok: false, message: "El responsable seleccionado no esta activo" };
+    return { ok: false, message: "El responsable seleccionado no está activo" };
   }
 
   const dueDate = parsed.data.dueDate !== undefined && parsed.data.dueDate ? new Date(`${parsed.data.dueDate}T12:00:00`) : parsed.data.dueDate === "" ? null : undefined;
@@ -181,10 +179,6 @@ export async function patchTrackingTask(input: unknown) {
       }
     })
   ]);
-
-  await prisma.auditLog.create({
-    data: { action: AuditAction.UPDATE, entity: "TrackingTask", entityId: existing.id, actorId: session.user.id }
-  });
 
   revalidateTracking();
   return { ok: true, message: "Tarea actualizada" };
@@ -223,9 +217,6 @@ export async function archiveTrackingTask(taskId: string) {
         fromValue: { archivedAt: null },
         toValue: { archivedAt: new Date().toISOString() }
       }
-    }),
-    prisma.auditLog.create({
-      data: { action: AuditAction.STATUS_CHANGE, entity: "TrackingTask", entityId: task.id, actorId: session.user.id, metadata: { lifecycle: "ARCHIVED" } }
     })
   ]);
 
@@ -234,42 +225,20 @@ export async function archiveTrackingTask(taskId: string) {
 }
 
 export async function deleteTrackingTask(taskId: string) {
-  const session = await requireRole([Role.ADMINISTRADOR]);
+  await requireRole([Role.ADMINISTRADOR]);
   const task = await prisma.trackingTask.findUnique({
     where: { id: taskId },
-    select: { id: true, title: true, deletedAt: true }
+    select: { id: true, title: true }
   });
 
   if (!task) {
     return { ok: false, message: "La tarea no existe" };
   }
 
-  if (task.deletedAt) {
-    return { ok: true, message: "La tarea ya estaba eliminada" };
-  }
-
-  await prisma.$transaction([
-    prisma.trackingTask.update({
-      where: { id: task.id },
-      data: { deletedAt: new Date(), deletedById: session.user.id }
-    }),
-    prisma.trackingTaskHistory.create({
-      data: {
-        taskId: task.id,
-        actorId: session.user.id,
-        action: TrackingHistoryAction.UPDATE,
-        message: "Tarea eliminada logicamente",
-        fromValue: { deletedAt: null },
-        toValue: { deletedAt: new Date().toISOString() }
-      }
-    }),
-    prisma.auditLog.create({
-      data: { action: AuditAction.DELETE, entity: "TrackingTask", entityId: task.id, actorId: session.user.id, metadata: { lifecycle: "DELETED" } }
-    })
-  ]);
+  await prisma.trackingTask.delete({ where: { id: task.id } });
 
   revalidateTracking();
-  return { ok: true, message: "Tarea movida a eliminadas" };
+  return { ok: true, message: "Tarea eliminada definitivamente" };
 }
 
 export async function restoreTrackingTask(taskId: string) {
@@ -302,9 +271,6 @@ export async function restoreTrackingTask(taskId: string) {
         fromValue: { archivedAt: task.archivedAt, deletedAt: task.deletedAt },
         toValue: { archivedAt: null, deletedAt: null }
       }
-    }),
-    prisma.auditLog.create({
-      data: { action: AuditAction.STATUS_CHANGE, entity: "TrackingTask", entityId: task.id, actorId: session.user.id, metadata: { lifecycle: "ACTIVE" } }
     })
   ]);
 
@@ -318,7 +284,7 @@ export async function changeTrackingTaskStatus(input: unknown) {
   const parsed = trackingTaskStatusChangeSchema.safeParse(input);
 
   if (!parsed.success) {
-    return { ok: false, message: "Datos invalidos" };
+    return { ok: false, message: "Datos inválidos" };
   }
 
   const [task, nextStatus] = await Promise.all([
@@ -341,11 +307,11 @@ export async function changeTrackingTaskStatus(input: unknown) {
   }
 
   if (!canTouchTask(session, task)) {
-    return { ok: false, message: "No podes actualizar esta tarea" };
+    return { ok: false, message: "No podés actualizar esta tarea" };
   }
 
   if (!nextStatus?.active) {
-    return { ok: false, message: "El estado seleccionado no esta activo" };
+    return { ok: false, message: "El estado seleccionado no está activo" };
   }
 
   if (task.statusId === nextStatus.id) {
@@ -378,13 +344,108 @@ export async function changeTrackingTaskStatus(input: unknown) {
   return { ok: true, message: nextStatus.isFinal ? "Tarea cerrada" : task.status.isFinal ? "Tarea reabierta" : "Estado actualizado" };
 }
 
+export async function bulkUpdateTrackingTasks(input: unknown) {
+  const session = await requireRole([Role.ADMINISTRADOR]);
+  assertRateLimit(`tracking-bulk-update:${session.user.id}`, 20, 60_000);
+  const parsed = trackingTaskBulkUpdateSchema.safeParse(input);
+
+  if (!parsed.success) {
+    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos inválidos" };
+  }
+
+  const taskIds = Array.from(new Set(parsed.data.taskIds));
+  const tasks = await prisma.trackingTask.findMany({
+    where: { id: { in: taskIds } },
+    select: { id: true, statusId: true, deletedAt: true }
+  });
+  const activeTaskIds = tasks.filter((task) => !task.deletedAt).map((task) => task.id);
+
+  if (!activeTaskIds.length) {
+    return { ok: false, message: "No hay tareas activas para actualizar" };
+  }
+
+  const data: {
+    statusId?: string;
+    assigneeId?: string;
+    priority?: TrackingTaskPriority;
+    dueDate?: Date | null;
+    closedAt?: Date | null;
+  } = {};
+  let statusName: string | null = null;
+
+  if (parsed.data.statusId) {
+    const status = await prisma.trackingTaskStatus.findUnique({
+      where: { id: parsed.data.statusId },
+      select: { id: true, name: true, active: true, isFinal: true }
+    });
+
+    if (!status?.active) {
+      return { ok: false, message: "El estado seleccionado no está activo" };
+    }
+
+    data.statusId = status.id;
+    data.closedAt = status.isFinal ? new Date() : null;
+    statusName = status.name;
+  }
+
+  if (parsed.data.assigneeId) {
+    const assignee = await prisma.user.findUnique({ where: { id: parsed.data.assigneeId }, select: { id: true, status: true } });
+    if (!assignee || assignee.status !== "ACTIVE") {
+      return { ok: false, message: "El responsable seleccionado no está activo" };
+    }
+    data.assigneeId = assignee.id;
+  }
+
+  if (parsed.data.priority) {
+    data.priority = parsed.data.priority as TrackingTaskPriority;
+  }
+
+  if (parsed.data.dueDate !== undefined) {
+    data.dueDate = parsed.data.dueDate ? new Date(`${parsed.data.dueDate}T12:00:00`) : null;
+  }
+
+  await prisma.$transaction([
+    prisma.trackingTask.updateMany({
+      where: { id: { in: activeTaskIds } },
+      data
+    }),
+    prisma.trackingTaskHistory.createMany({
+      data: activeTaskIds.map((taskId) => ({
+        taskId,
+        actorId: session.user.id,
+        action: data.statusId ? TrackingHistoryAction.STATUS_CHANGE : TrackingHistoryAction.UPDATE,
+        message: data.statusId ? `Estado actualizado masivamente: ${statusName}` : "Actualización masiva",
+        toValue: parsed.data
+      }))
+    })
+  ]);
+
+  revalidateTracking();
+  return { ok: true, message: `${activeTaskIds.length} tareas actualizadas`, updatedIds: activeTaskIds };
+}
+
+export async function bulkDeleteTrackingTasks(input: unknown) {
+  await requireRole([Role.ADMINISTRADOR]);
+  const parsed = trackingTaskBulkDeleteSchema.safeParse(input);
+
+  if (!parsed.success) {
+    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Selecciona tareas para eliminar" };
+  }
+
+  const taskIds = Array.from(new Set(parsed.data.taskIds));
+  const deleted = await prisma.trackingTask.deleteMany({ where: { id: { in: taskIds } } });
+
+  revalidateTracking();
+  return { ok: true, message: `${deleted.count} tareas eliminadas definitivamente`, deletedIds: taskIds };
+}
+
 export async function addTrackingComment(input: unknown) {
   const session = await requireSession();
   assertRateLimit(`tracking-comment:${session.user.id}`, 80, 60_000);
   const parsed = trackingCommentSchema.safeParse(input);
 
   if (!parsed.success) {
-    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos invalidos" };
+    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos inválidos" };
   }
 
   const task = await prisma.trackingTask.findUnique({ where: { id: parsed.data.taskId }, select: { id: true, assigneeId: true, deletedAt: true } });
@@ -398,7 +459,7 @@ export async function addTrackingComment(input: unknown) {
   }
 
   if (!canTouchTask(session, task)) {
-    return { ok: false, message: "No podes comentar esta tarea" };
+    return { ok: false, message: "No podés comentar esta tarea" };
   }
 
   await prisma.$transaction([
@@ -423,7 +484,7 @@ export async function logTrackingTaskTime(input: unknown) {
   const parsed = trackingTimeLogSchema.safeParse(input);
 
   if (!parsed.success) {
-    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos invalidos" };
+    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos inválidos" };
   }
 
   const task = await prisma.trackingTask.findUnique({ where: { id: parsed.data.taskId }, select: { id: true, assigneeId: true, consumedMinutes: true, deletedAt: true } });
@@ -437,7 +498,7 @@ export async function logTrackingTaskTime(input: unknown) {
   }
 
   if (!canTouchTask(session, task)) {
-    return { ok: false, message: "No podes imputar tiempo en esta tarea" };
+    return { ok: false, message: "No podés imputar tiempo en esta tarea" };
   }
 
   await prisma.$transaction([
@@ -461,11 +522,11 @@ export async function logTrackingTaskTime(input: unknown) {
 }
 
 export async function upsertTrackingStatus(input: unknown) {
-  const session = await requireRole([Role.ADMINISTRADOR]);
+  await requireRole([Role.ADMINISTRADOR]);
   const parsed = trackingStatusSchema.safeParse(input);
 
   if (!parsed.success) {
-    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos invalidos" };
+    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos inválidos" };
   }
 
   const data = {
@@ -476,20 +537,18 @@ export async function upsertTrackingStatus(input: unknown) {
     isFinal: parsed.data.isFinal,
     isBlocked: parsed.data.isBlocked
   };
-  const status = parsed.data.id
-    ? await prisma.trackingTaskStatus.update({ where: { id: parsed.data.id }, data })
-    : await prisma.trackingTaskStatus.create({ data });
-
-  await prisma.auditLog.create({
-    data: { action: AuditAction.CONFIG_CHANGE, entity: "TrackingTaskStatus", entityId: status.id, actorId: session.user.id }
-  });
+  if (parsed.data.id) {
+    await prisma.trackingTaskStatus.update({ where: { id: parsed.data.id }, data });
+  } else {
+    await prisma.trackingTaskStatus.create({ data });
+  }
 
   revalidateTracking();
   return { ok: true, message: parsed.data.id ? "Estado actualizado" : "Estado creado" };
 }
 
 export async function deleteTrackingStatus(statusId: string) {
-  const session = await requireRole([Role.ADMINISTRADOR]);
+  await requireRole([Role.ADMINISTRADOR]);
   const count = await prisma.trackingTask.count({ where: { statusId } });
 
   if (count > 0) {
@@ -499,9 +558,6 @@ export async function deleteTrackingStatus(statusId: string) {
   }
 
   await prisma.trackingTaskStatus.delete({ where: { id: statusId } });
-  await prisma.auditLog.create({
-    data: { action: AuditAction.CONFIG_CHANGE, entity: "TrackingTaskStatus", entityId: statusId, actorId: session.user.id }
-  });
 
   revalidateTracking();
   return { ok: true, message: "Estado eliminado" };
@@ -511,12 +567,8 @@ export async function logTrackingExport(format: "CSV" | "XLSX" | "PDF") {
   const session = await requireSession();
 
   if (!canExportTracking(session)) {
-    return { ok: false, message: "No tenes permisos para exportar" };
+    return { ok: false, message: "No tenés permisos para exportar" };
   }
 
-  await prisma.auditLog.create({
-    data: { action: AuditAction.EXPORT, entity: "Tracking", actorId: session.user.id, metadata: { format } }
-  });
-
-  return { ok: true, message: "Exportacion registrada" };
+  return { ok: true, message: `Exportación ${format} preparada` };
 }

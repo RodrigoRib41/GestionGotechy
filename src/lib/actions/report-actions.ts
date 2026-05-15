@@ -1,6 +1,6 @@
 "use server";
 
-import { AuditAction, CategoryKind, ClientStatus, Prisma, ProjectStatus, Role } from "@prisma/client";
+import { CategoryKind, ClientStatus, Prisma, ProjectStatus, Role } from "@prisma/client";
 import { revalidatePath, revalidateTag } from "next/cache";
 
 import { prisma } from "@/lib/prisma";
@@ -56,7 +56,7 @@ export async function previewTimeHistoryDelete(input: unknown) {
   const parsed = reportDeletePreviewSchema.safeParse(input);
 
   if (!parsed.success) {
-    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Rango invalido" };
+    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Rango inválido" };
   }
 
   const range = buildDeleteRange(parsed.data);
@@ -72,21 +72,21 @@ export async function deleteTimeHistory(input: unknown) {
   const parsed = reportDeleteSchema.safeParse(input);
 
   if (!parsed.success) {
-    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos invalidos" };
+    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos inválidos" };
   }
 
   if (parsed.data.confirmation !== "BORRAR") {
-    return { ok: false, message: "Escribi BORRAR para confirmar" };
+    return { ok: false, message: "Escribí BORRAR para confirmar" };
   }
 
   const configuredPin = process.env.REPORT_DELETE_PIN;
 
   if (!configuredPin) {
-    return { ok: false, message: "REPORT_DELETE_PIN no esta configurado en el servidor" };
+    return { ok: false, message: "REPORT_DELETE_PIN no está configurado en el servidor" };
   }
 
   if (parsed.data.pin !== configuredPin) {
-    return { ok: false, message: "PIN invalido" };
+    return { ok: false, message: "PIN inválido" };
   }
 
   const range = buildDeleteRange(parsed.data);
@@ -96,25 +96,7 @@ export async function deleteTimeHistory(input: unknown) {
     return { ok: false, message: "No hay registros para borrar" };
   }
 
-  const [deleted] = await prisma.$transaction([
-    prisma.timeEntry.deleteMany({ where: range.where }),
-    prisma.auditLog.create({
-      data: {
-        action: AuditAction.DELETE,
-        entity: "TimeEntryHistory",
-        actorId: session.user.id,
-        metadata: {
-          mode: parsed.data.mode,
-          from: range.from ?? null,
-          to: range.to ?? null,
-          label: range.label,
-          affectedCount: summary.count,
-          minutes: summary.minutes,
-          overtimeMinutes: summary.overtimeMinutes
-        }
-      }
-    })
-  ]);
+  const deleted = await prisma.timeEntry.deleteMany({ where: range.where });
 
   revalidatePath("/");
   revalidatePath("/reports");
@@ -134,7 +116,7 @@ export async function previewTimeImport(input: unknown) {
   const parsed = timeImportPreviewSchema.safeParse(input);
 
   if (!parsed.success) {
-    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Archivo invalido" };
+    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Archivo inválido" };
   }
 
   const preview = await buildImportPreview(parsed.data.rows);
@@ -149,13 +131,13 @@ export async function importTimeEntries(input: unknown) {
   const parsed = timeImportCommitSchema.safeParse(input);
 
   if (!parsed.success) {
-    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Archivo invalido" };
+    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Archivo inválido" };
   }
 
   const initialPreview = await buildImportPreview(parsed.data.rows);
 
   if (initialPreview.invalidRows > 0) {
-    return { ok: false, message: "Corregi las filas invalidas antes de importar", preview: initialPreview };
+    return { ok: false, message: "Corregí las filas inválidas antes de importar", preview: initialPreview };
   }
 
   if ((initialPreview.missingProjects.length > 0 || initialPreview.missingClients.length > 0) && !parsed.data.autoCreateMissing) {
@@ -213,22 +195,6 @@ export async function importTimeEntries(input: unknown) {
       }
     });
 
-    await tx.auditLog.create({
-      data: {
-        action: AuditAction.CREATE,
-        entity: "TimeEntryImport",
-        actorId: session.user.id,
-        metadata: {
-          fileName: parsed.data.fileName ?? null,
-          totalRows: finalPreview.totalRows,
-          importedRows,
-          duplicateRows: finalPreview.duplicateRows,
-          invalidRows: finalPreview.invalidRows,
-          createdProjects: initialPreview.missingProjects,
-          createdClients: initialPreview.missingClients
-        }
-      }
-    });
   });
 
   revalidateReportSurfaces();
@@ -454,7 +420,7 @@ function resolveCategory(row: ImportRow, catalogs: Awaited<ReturnType<typeof get
   if (!row.category) return catalogs.defaultCategory;
   const category = catalogs.categoriesByName.get(normalizeText(row.category));
   if (category) return category;
-  errors.push({ rowNumber: row.rowNumber, field: "Categoria", message: "Categoria activa no encontrada" });
+  errors.push({ rowNumber: row.rowNumber, field: "Categoría", message: "Categoría activa no encontrada" });
   return null;
 }
 
@@ -487,7 +453,7 @@ async function ensureDefaultImportCategory() {
       color: "#64748B",
       kind: CategoryKind.PRODUCTIVE,
       active: true,
-      description: "Categoria usada para importaciones historicas sin columna Categoria"
+      description: "Categoría usada para importaciones históricas sin columna Categoría"
     },
     select: { id: true }
   });
@@ -559,13 +525,13 @@ function normalizeImportDate(value: string) {
 
 function validateNormalizedImportRow(row: ImportRow, errors: ImportIssue[]) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(row.date)) {
-    errors.push({ rowNumber: row.rowNumber, field: "Fecha", message: "Fecha invalida" });
+    errors.push({ rowNumber: row.rowNumber, field: "Fecha", message: "Fecha inválida" });
     return;
   }
 
   const date = new Date(`${row.date}T12:00:00`);
   if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== row.date) {
-    errors.push({ rowNumber: row.rowNumber, field: "Fecha", message: "Fecha invalida" });
+    errors.push({ rowNumber: row.rowNumber, field: "Fecha", message: "Fecha inválida" });
   }
 
   if (!Number.isFinite(row.minutes) || !Number.isInteger(row.minutes) || row.minutes <= 0) {

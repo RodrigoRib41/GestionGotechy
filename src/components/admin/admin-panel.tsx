@@ -2,14 +2,14 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ColumnDef } from "@tanstack/react-table";
-import { AlertTriangle, ChevronDown, Database, Download, Settings2, ShieldPlus, Trash2 } from "lucide-react";
+import { AlertTriangle, ChevronDown, Database, Settings2, ShieldPlus, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useMemo, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 
-import { deleteAuditLogs, loadDatabaseState, previewAuditLogDelete } from "@/lib/actions/admin-actions";
+import { loadDatabaseState } from "@/lib/actions/admin-actions";
 import {
   addAllowedEmail,
   assignUserRole,
@@ -35,7 +35,6 @@ import { Select } from "@/components/ui/select";
 type AdminData = Awaited<ReturnType<typeof import("@/lib/data/resources").getAdminData>>;
 type FormValues = z.input<typeof allowedEmailSchema>;
 type RoleValue = (typeof roleValues)[number];
-type DeleteSummary = { count: number; actions: number; modules: number; label: string; from?: string; to?: string };
 type AllowedEmailRow = { id: string; email: string; role: RoleValue; displayName?: string | null; status: string };
 type UserRow = AdminData["users"][number];
 type AllowedDeleteImpact = {
@@ -60,7 +59,6 @@ type DisabledUserImpact = {
   favorites: number;
   dashboardPreferences: number;
   workSchedule: number;
-  auditLogs: number;
   timeEntries: number;
   assignedTrackingTasks: number;
   createdTrackingTasks: number;
@@ -87,40 +85,12 @@ export function AdminPanel({ data }: { data: AdminData }) {
   const [disabledDeleteImpact, setDisabledDeleteImpact] = useState<DisabledUserImpact | null>(null);
   const [disabledDeleteStrategy, setDisabledDeleteStrategy] = useState<DisabledUserStrategy>("ARCHIVE");
   const [disabledDeleteConfirmation, setDisabledDeleteConfirmation] = useState("");
-  const [auditFrom, setAuditFrom] = useState("");
-  const [auditTo, setAuditTo] = useState("");
-  const [auditActor, setAuditActor] = useState("");
-  const [auditAction, setAuditAction] = useState("");
-  const [auditEntity, setAuditEntity] = useState("");
-  const [auditDeleteOpen, setAuditDeleteOpen] = useState(false);
-  const [auditDeleteMode, setAuditDeleteMode] = useState<"range" | "all">("range");
-  const [auditDeleteFrom, setAuditDeleteFrom] = useState("");
-  const [auditDeleteTo, setAuditDeleteTo] = useState("");
-  const [auditDeletePin, setAuditDeletePin] = useState("");
-  const [auditDeleteConfirmation, setAuditDeleteConfirmation] = useState("");
-  const [auditDeleteSummary, setAuditDeleteSummary] = useState<DeleteSummary | null>(null);
   const [categoryDraft, setCategoryDraft] = useState({ name: "", color: "#2563EB", kind: "PRODUCTIVE", active: true });
   const [projectTypeDraft, setProjectTypeDraft] = useState({ id: "", name: "", description: "", active: true, monthlyReset: false });
   const form = useForm<FormValues>({
     resolver: zodResolver(allowedEmailSchema),
     defaultValues: { email: "", role: "COLABORADOR" }
   });
-
-  const filteredLogs = useMemo(() => {
-    return data.logs.filter((log) => {
-      const date = log.createdAt.slice(0, 10);
-      return (
-        (!auditFrom || date >= auditFrom) &&
-        (!auditTo || date <= auditTo) &&
-        (!auditActor || log.actorId === auditActor) &&
-        (!auditAction || log.action === auditAction) &&
-        (!auditEntity || log.entity === auditEntity)
-      );
-    });
-  }, [auditAction, auditActor, auditEntity, auditFrom, auditTo, data.logs]);
-  const auditActors = useMemo(() => unique(data.logs.map((log) => ({ id: log.actorId ?? "", label: log.actor })).filter((item) => item.id)), [data.logs]);
-  const auditActions = useMemo(() => uniqueStrings(data.logs.map((log) => log.action)), [data.logs]);
-  const auditEntities = useMemo(() => uniqueStrings(data.logs.map((log) => log.entity)), [data.logs]);
 
   const userColumns: ColumnDef<UserRow>[] = [
     { accessorKey: "name", header: "Nombre", cell: ({ row }) => row.original.name ?? "Sin nombre" },
@@ -129,7 +99,7 @@ export function AdminPanel({ data }: { data: AdminData }) {
     { accessorKey: "status", header: "Estado" },
     {
       id: "actions",
-      header: "Acciones",
+      header: "Acciónes",
       cell: ({ row }) => (
         <div className="flex flex-wrap gap-1">
           {roleValues.map((role) => (
@@ -188,7 +158,7 @@ export function AdminPanel({ data }: { data: AdminData }) {
     { accessorKey: "displayName", header: "Alias", cell: ({ row }) => row.original.displayName ?? "-" },
     {
       id: "actions",
-      header: "Acciones",
+      header: "Acciónes",
       cell: ({ row }) => (
         <Button size="sm" variant="ghost" onClick={() => prepareAllowedDelete(row.original)}>
           <Trash2 className="mr-1.5 h-3.5 w-3.5" />
@@ -196,13 +166,6 @@ export function AdminPanel({ data }: { data: AdminData }) {
         </Button>
       )
     }
-  ];
-
-  const logColumns: ColumnDef<AdminData["logs"][number]>[] = [
-    { accessorKey: "action", header: "Accion" },
-    { accessorKey: "entity", header: "Modulo" },
-    { accessorKey: "actor", header: "Usuario" },
-    { accessorKey: "createdAt", header: "Fecha", cell: ({ row }) => new Date(row.original.createdAt).toLocaleString("es-AR") }
   ];
 
   function onSubmit(values: FormValues) {
@@ -292,47 +255,6 @@ export function AdminPanel({ data }: { data: AdminData }) {
     });
   }
 
-  function exportAudit(format: "csv" | "xlsx") {
-    const params = new URLSearchParams({ format });
-    if (auditFrom) params.set("from", auditFrom);
-    if (auditTo) params.set("to", auditTo);
-    if (auditActor) params.set("actorId", auditActor);
-    if (auditAction) params.set("action", auditAction);
-    if (auditEntity) params.set("entity", auditEntity);
-    window.location.href = `/api/admin/audit/export?${params.toString()}`;
-  }
-
-  function previewAuditDelete() {
-    startTransition(async () => {
-      const result = await previewAuditLogDelete({ mode: auditDeleteMode, from: auditDeleteFrom, to: auditDeleteTo });
-      if (!result.ok || !result.summary) {
-        toast.error(result.message);
-        return;
-      }
-      setAuditDeleteSummary(result.summary);
-      toast.success("Resumen listo");
-    });
-  }
-
-  function confirmAuditDelete() {
-    startTransition(async () => {
-      const result = await deleteAuditLogs({
-        mode: auditDeleteMode,
-        from: auditDeleteFrom,
-        to: auditDeleteTo,
-        pin: auditDeletePin,
-        confirmation: auditDeleteConfirmation
-      });
-      if (result.ok) {
-        toast.success(result.message);
-        setAuditDeleteOpen(false);
-        router.refresh();
-      } else {
-        toast.error(result.message);
-      }
-    });
-  }
-
   return (
     <div className="space-y-6">
       <DatabaseState state={data.databaseState} />
@@ -395,7 +317,7 @@ export function AdminPanel({ data }: { data: AdminData }) {
         </CardHeader>
         <CardContent>
           <section className="space-y-4">
-            <h3 className="text-sm font-semibold">Categorias</h3>
+            <h3 className="text-sm font-semibold">Categorías</h3>
             <div className="grid gap-3 sm:grid-cols-[1fr_120px_180px_auto]">
               <Input placeholder="Capacitacion" value={categoryDraft.name} onChange={(event) => setCategoryDraft({ ...categoryDraft, name: event.target.value })} />
               <Input type="color" value={categoryDraft.color} onChange={(event) => setCategoryDraft({ ...categoryDraft, color: event.target.value })} />
@@ -534,76 +456,10 @@ export function AdminPanel({ data }: { data: AdminData }) {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader className="gap-3">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <CardTitle>Auditoria</CardTitle>
-              <p className="mt-1 text-sm text-muted-foreground">Historial descargable, filtrable y limpiable solo por superadmin.</p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" onClick={() => exportAudit("csv")}>
-                <Download className="mr-2 h-4 w-4" />
-                CSV
-              </Button>
-              <Button variant="outline" onClick={() => exportAudit("xlsx")}>
-                <Download className="mr-2 h-4 w-4" />
-                XLSX
-              </Button>
-              <Button variant="destructive" onClick={() => setAuditDeleteOpen(true)}>
-                <Trash2 className="mr-2 h-4 w-4" />
-                Eliminar logs de auditoria
-              </Button>
-            </div>
-          </div>
-          <div className="grid gap-3 md:grid-cols-5">
-            <Filter label="Desde">
-              <Input type="date" value={auditFrom} onChange={(event) => setAuditFrom(event.target.value)} />
-            </Filter>
-            <Filter label="Hasta">
-              <Input type="date" value={auditTo} onChange={(event) => setAuditTo(event.target.value)} />
-            </Filter>
-            <Filter label="Usuario">
-              <Select value={auditActor} onChange={(event) => setAuditActor(event.target.value)}>
-                <option value="">Todos</option>
-                {auditActors.map((actor) => (
-                  <option key={actor.id} value={actor.id}>
-                    {actor.label}
-                  </option>
-                ))}
-              </Select>
-            </Filter>
-            <Filter label="Accion">
-              <Select value={auditAction} onChange={(event) => setAuditAction(event.target.value)}>
-                <option value="">Todas</option>
-                {auditActions.map((action) => (
-                  <option key={action} value={action}>
-                    {action}
-                  </option>
-                ))}
-              </Select>
-            </Filter>
-            <Filter label="Modulo">
-              <Select value={auditEntity} onChange={(event) => setAuditEntity(event.target.value)}>
-                <option value="">Todos</option>
-                {auditEntities.map((entity) => (
-                  <option key={entity} value={entity}>
-                    {entity}
-                  </option>
-                ))}
-              </Select>
-            </Filter>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <DataTable columns={logColumns} data={filteredLogs} searchPlaceholder="Buscar log" />
-        </CardContent>
-      </Card>
-
       {allowedToDelete ? (
         <ConfirmModal
           title="Eliminar mail habilitado"
-          message={`Se eliminara ${allowedToDelete.email}, se archivara el usuario relacionado y se revocaran sesiones/cuentas. Las horas, auditoria, tracking e historial quedan preservados.`}
+          message={`Se eliminara ${allowedToDelete.email}, se archivara el usuario relacionado y se revocaran sesiones/cuentas. Las horas, tracking e historial quedan preservados.`}
           impact={allowedDeleteImpact}
           loading={isPending && !allowedDeleteImpact}
           onCancel={() => {
@@ -632,25 +488,6 @@ export function AdminPanel({ data }: { data: AdminData }) {
         />
       ) : null}
 
-      {auditDeleteOpen ? (
-        <CriticalDeleteModal
-          mode={auditDeleteMode}
-          setMode={setAuditDeleteMode}
-          from={auditDeleteFrom}
-          setFrom={setAuditDeleteFrom}
-          to={auditDeleteTo}
-          setTo={setAuditDeleteTo}
-          pin={auditDeletePin}
-          setPin={setAuditDeletePin}
-          confirmation={auditDeleteConfirmation}
-          setConfirmation={setAuditDeleteConfirmation}
-          summary={auditDeleteSummary}
-          isPending={isPending}
-          onPreview={previewAuditDelete}
-          onCancel={() => setAuditDeleteOpen(false)}
-          onConfirm={confirmAuditDelete}
-        />
-      ) : null}
     </div>
   );
 }
@@ -714,96 +551,6 @@ function DatabaseState({ state }: { state: AdminData["databaseState"] }) {
   );
 }
 
-function CriticalDeleteModal({
-  mode,
-  setMode,
-  from,
-  setFrom,
-  to,
-  setTo,
-  pin,
-  setPin,
-  confirmation,
-  setConfirmation,
-  summary,
-  isPending,
-  onPreview,
-  onCancel,
-  onConfirm
-}: {
-  mode: "range" | "all";
-  setMode: (mode: "range" | "all") => void;
-  from: string;
-  setFrom: (value: string) => void;
-  to: string;
-  setTo: (value: string) => void;
-  pin: string;
-  setPin: (value: string) => void;
-  confirmation: string;
-  setConfirmation: (value: string) => void;
-  summary: DeleteSummary | null;
-  isPending: boolean;
-  onPreview: () => void;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
-      <div className="w-full max-w-xl rounded-lg border bg-card shadow-xl">
-        <div className="border-b p-5">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="h-5 w-5 text-destructive" />
-            <h2 className="text-lg font-semibold">Eliminar logs de auditoria</h2>
-          </div>
-          <p className="mt-2 text-sm text-muted-foreground">Operacion critica con PIN server-side, resumen previo y confirmacion doble.</p>
-        </div>
-        <div className="space-y-4 p-5">
-          <div className="grid gap-3 sm:grid-cols-3">
-            <Filter label="Alcance">
-              <Select value={mode} onChange={(event) => setMode(event.target.value as "range" | "all")}>
-                <option value="range">Rango</option>
-                <option value="all">Todo</option>
-              </Select>
-            </Filter>
-            <Filter label="Desde">
-              <Input disabled={mode === "all"} type="date" value={from} onChange={(event) => setFrom(event.target.value)} />
-            </Filter>
-            <Filter label="Hasta">
-              <Input disabled={mode === "all"} type="date" value={to} onChange={(event) => setTo(event.target.value)} />
-            </Filter>
-          </div>
-          <Button disabled={isPending} variant="outline" onClick={onPreview}>
-            Calcular afectados
-          </Button>
-          {summary ? (
-            <div className="grid gap-3 rounded-md border bg-muted/30 p-3 text-sm sm:grid-cols-3">
-              <Metric label="Logs" value={String(summary.count)} />
-              <Metric label="Acciones" value={String(summary.actions)} />
-              <Metric label="Modulos" value={String(summary.modules)} />
-            </div>
-          ) : null}
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Filter label="PIN">
-              <Input autoComplete="off" type="password" value={pin} onChange={(event) => setPin(event.target.value)} />
-            </Filter>
-            <Filter label='Escribi "BORRAR"'>
-              <Input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} />
-            </Filter>
-          </div>
-          <div className="flex justify-end gap-2 border-t pt-4">
-            <Button disabled={isPending} variant="ghost" onClick={onCancel}>
-              Cancelar
-            </Button>
-            <Button disabled={isPending || !summary || summary.count === 0 || confirmation.trim().toUpperCase() !== "BORRAR"} variant="destructive" onClick={onConfirm}>
-              {isPending ? "Procesando..." : "Eliminar logs"}
-            </Button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function ConfirmModal({
   title,
   message,
@@ -833,11 +580,11 @@ function ConfirmModal({
               <strong>{impact.userFound ? "Si" : "No"}</strong>
               <span>Sesiones/cuentas a revocar</span>
               <strong>{impact.sessions + impact.accounts}</strong>
-              <span>Relaciones operativas</span>
+              <span>Relaciónes operativas</span>
               <strong>{impact.projectLinks + impact.favorites + impact.dashboardPreferences}</strong>
               <span>Objetivos propios</span>
               <strong>{impact.ownedGoals}</strong>
-              <span>Horas historicas preservadas</span>
+              <span>Horas históricas preservadas</span>
               <strong>{impact.historicalTimeEntries}</strong>
               <span>Tracking preservado</span>
               <strong>{impact.assignedTrackingTasks + impact.createdTrackingTasks}</strong>
@@ -889,23 +636,22 @@ function DisabledUserDeleteModal({
             <h2 className="text-lg font-semibold">Resolver usuario DISABLED</h2>
           </div>
           <p className="mt-2 text-sm text-muted-foreground">
-            {user.name ?? user.email} esta deshabilitado. La eliminacion fisica solo se habilita si no hay referencias historicas.
+            {user.name ?? user.email} está deshabilitado. La eliminación física solo se habilita si no hay referencias históricas.
           </p>
         </div>
         <div className="space-y-4 p-5">
           {!impact ? <div className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">Calculando impacto...</div> : null}
           {impact ? (
             <div className="space-y-3">
-              <div className="grid gap-3 sm:grid-cols-4">
+              <div className="grid gap-3 sm:grid-cols-3">
                 <Metric label="Referencias" value={String(impact.blockingReferences)} />
                 <Metric label="Horas" value={String(impact.timeEntries)} />
-                <Metric label="Auditoria" value={String(impact.auditLogs)} />
                 <Metric label="Objetivos" value={String(impact.goalMetrics + impact.goalCompliances + impact.goalHistorySnapshots + impact.goalCheckpoints)} />
               </div>
               <div className="rounded-md border bg-muted/30 p-3 text-sm">
                 {impact.canDeletePhysically
-                  ? "No se detectaron referencias historicas: podes eliminar el usuario definitivamente."
-                  : "Hay referencias historicas. La app impide el borrado fisico para preservar auditoria, reportes, horas, tracking y objetivos."}
+                  ? "No se detectaron referencias históricas: podés eliminar el usuario definitivamente."
+                  : "Hay referencias históricas. La app impide el borrado fisico para preservar reportes, horas, tracking y objetivos."}
               </div>
             </div>
           ) : null}
@@ -977,16 +723,6 @@ function roleLabel(role: RoleValue) {
   if (role === "SUPERADMIN") return "Superadmin";
   if (role === "ADMINISTRADOR") return "Administrador";
   return "Colaborador";
-}
-
-function unique(items: Array<{ id: string; label: string }>) {
-  const map = new Map<string, string>();
-  for (const item of items) map.set(item.id, item.label);
-  return Array.from(map.entries()).map(([id, label]) => ({ id, label }));
-}
-
-function uniqueStrings(items: string[]) {
-  return Array.from(new Set(items)).sort();
 }
 
 function formatBytes(bytes: number) {

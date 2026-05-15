@@ -27,7 +27,7 @@ export const categoryKindMeta: Record<
   ADMINISTRATIVE: {
     label: "Administrativa",
     shortLabel: "Admin.",
-    description: "Administracion, reportes, documentacion o gestion operativa.",
+    description: "Administración, reportes, documentacion o gestion operativa.",
     color: "#CA8A04",
     bgClass: "bg-amber-500/10",
     textClass: "text-amber-700 dark:text-amber-300",

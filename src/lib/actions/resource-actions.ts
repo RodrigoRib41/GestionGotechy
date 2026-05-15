@@ -1,6 +1,6 @@
 "use server";
 
-import { AuditAction, Category, ClientStatus, ProjectStatus, Role, ThemeVariant, UserStatus, WorkModality } from "@prisma/client";
+import { ClientStatus, ProjectStatus, Role, ThemeVariant, UserStatus, WorkModality } from "@prisma/client";
 import { revalidatePath, revalidateTag } from "next/cache";
 
 import { prisma } from "@/lib/prisma";
@@ -8,9 +8,12 @@ import { requireRole, requireSession, requireSuperadmin } from "@/lib/permission
 import { assertRateLimit } from "@/lib/rate-limit";
 import {
   allowedEmailSchema,
+  bulkClientDeleteSchema,
+  bulkProjectDeleteSchema,
   categorySchema,
   clientSchema,
   disabledUserDeleteSchema,
+  projectVisibilitySchema,
   projectTypeSchema,
   projectSchema,
   roleAssignmentSchema,
@@ -118,7 +121,7 @@ export async function createProject(input: unknown) {
   const parsed = projectSchema.safeParse(input);
 
   if (!parsed.success) {
-    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos invalidos" };
+    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos inválidos" };
   }
 
   const project = await prisma.project.create({
@@ -133,21 +136,17 @@ export async function createProject(input: unknown) {
     }
   });
 
-  await prisma.auditLog.create({
-    data: { action: AuditAction.CREATE, entity: "Project", entityId: project.id, actorId: session.user.id }
-  });
-
   revalidateResourceSurfaces();
 
   return { ok: true, message: "Proyecto creado", project: await serializeProjectForList(project.id) };
 }
 
 export async function updateProject(input: unknown) {
-  const session = await requireRole([Role.ADMINISTRADOR]);
+  await requireRole([Role.ADMINISTRADOR]);
   const parsed = projectSchema.safeParse(input);
 
   if (!parsed.success || !parsed.data.id) {
-    return { ok: false, message: "Datos invalidos" };
+    return { ok: false, message: "Datos inválidos" };
   }
 
   const project = await prisma.project.update({
@@ -163,16 +162,12 @@ export async function updateProject(input: unknown) {
     }
   });
 
-  await prisma.auditLog.create({
-    data: { action: AuditAction.UPDATE, entity: "Project", entityId: parsed.data.id, actorId: session.user.id }
-  });
-
   revalidateResourceSurfaces();
   return { ok: true, message: "Proyecto actualizado", project: await serializeProjectForList(project.id) };
 }
 
 export async function toggleProjectStatus(projectId: string) {
-  const session = await requireRole([Role.ADMINISTRADOR]);
+  await requireRole([Role.ADMINISTRADOR]);
   const project = await prisma.project.findUnique({ where: { id: projectId }, select: { status: true } });
 
   if (!project) {
@@ -181,35 +176,65 @@ export async function toggleProjectStatus(projectId: string) {
 
   const nextStatus = project.status === ProjectStatus.ACTIVE ? ProjectStatus.INACTIVE : ProjectStatus.ACTIVE;
   await prisma.project.update({ where: { id: projectId }, data: { status: nextStatus } });
-  await prisma.auditLog.create({
-    data: {
-      action: AuditAction.STATUS_CHANGE,
-      entity: "Project",
-      entityId: projectId,
-      actorId: session.user.id,
-      metadata: { status: nextStatus }
-    }
-  });
 
   revalidateResourceSurfaces();
   return { ok: true, message: nextStatus === ProjectStatus.ACTIVE ? "Proyecto activado" : "Proyecto desactivado" };
 }
 
 export async function deleteProject(projectId: string) {
-  const session = await requireRole([Role.ADMINISTRADOR]);
-  const entryCount = await prisma.timeEntry.count({ where: { projectId } });
+  await requireRole([Role.ADMINISTRADOR]);
+  const [entryCount, taskCount] = await Promise.all([
+    prisma.timeEntry.count({ where: { projectId } }),
+    prisma.trackingTask.count({ where: { projectId } })
+  ]);
 
   if (entryCount > 0) {
     return { ok: false, message: "No se puede eliminar un proyecto con minutos registrados" };
   }
 
+  if (taskCount > 0) {
+    return { ok: false, message: "No se puede eliminar un proyecto con tareas asociadas" };
+  }
+
   await prisma.project.delete({ where: { id: projectId } });
-  await prisma.auditLog.create({
-    data: { action: AuditAction.DELETE, entity: "Project", entityId: projectId, actorId: session.user.id }
-  });
 
   revalidateResourceSurfaces();
   return { ok: true, message: "Proyecto eliminado" };
+}
+
+export async function deleteProjects(input: unknown) {
+  await requireRole([Role.ADMINISTRADOR]);
+  const parsed = bulkProjectDeleteSchema.safeParse(input);
+
+  if (!parsed.success) {
+    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Selecciona proyectos para eliminar" };
+  }
+
+  const ids = Array.from(new Set(parsed.data.projectIds));
+  const projects = await prisma.project.findMany({
+    where: { id: { in: ids } },
+    select: {
+      id: true,
+      name: true,
+      _count: { select: { timeEntries: true, trackingTasks: true } }
+    }
+  });
+  const deletable = projects.filter((project) => project._count.timeEntries === 0 && project._count.trackingTasks === 0);
+  const blocked = projects.filter((project) => project._count.timeEntries > 0 || project._count.trackingTasks > 0);
+
+  if (!deletable.length) {
+    return { ok: false, message: "No hay proyectos eliminables en la selección", blocked: blocked.map((project) => project.name) };
+  }
+
+  await prisma.project.deleteMany({ where: { id: { in: deletable.map((project) => project.id) } } });
+  revalidateResourceSurfaces();
+
+  return {
+    ok: true,
+    message: `${deletable.length} proyectos eliminados${blocked.length ? `; ${blocked.length} quedaron bloqueados por horas o tareas` : ""}`,
+    deletedIds: deletable.map((project) => project.id),
+    blocked: blocked.map((project) => project.name)
+  };
 }
 
 export async function createClient(input: unknown) {
@@ -219,7 +244,7 @@ export async function createClient(input: unknown) {
   const parsed = clientSchema.safeParse(input);
 
   if (!parsed.success) {
-    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos invalidos" };
+    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos inválidos" };
   }
 
   const client = await prisma.client.create({
@@ -230,21 +255,17 @@ export async function createClient(input: unknown) {
     }
   });
 
-  await prisma.auditLog.create({
-    data: { action: AuditAction.CREATE, entity: "Client", entityId: client.id, actorId: session.user.id }
-  });
-
   revalidateResourceSurfaces();
 
   return { ok: true, message: "Cliente creado", client: await serializeClientForList(client.id) };
 }
 
 export async function updateClient(input: unknown) {
-  const session = await requireRole([Role.ADMINISTRADOR]);
+  await requireRole([Role.ADMINISTRADOR]);
   const parsed = clientSchema.safeParse(input);
 
   if (!parsed.success || !parsed.data.id) {
-    return { ok: false, message: "Datos invalidos" };
+    return { ok: false, message: "Datos inválidos" };
   }
 
   await prisma.client.update({
@@ -256,36 +277,93 @@ export async function updateClient(input: unknown) {
     }
   });
 
-  await prisma.auditLog.create({
-    data: { action: AuditAction.UPDATE, entity: "Client", entityId: parsed.data.id, actorId: session.user.id }
-  });
-
   revalidateResourceSurfaces();
   return { ok: true, message: "Cliente actualizado", client: await serializeClientForList(parsed.data.id) };
 }
 
 export async function deleteClient(clientId: string) {
-  const session = await requireRole([Role.ADMINISTRADOR]);
-  const [entryCount, activeProjectCount] = await Promise.all([
+  await requireRole([Role.ADMINISTRADOR]);
+  const [entryCount, projectCount] = await Promise.all([
     prisma.timeEntry.count({ where: { clientId } }),
-    prisma.project.count({ where: { clientId, status: "ACTIVE" } })
+    prisma.project.count({ where: { clientId } })
   ]);
 
   if (entryCount > 0) {
     return { ok: false, message: "No se puede eliminar un cliente con minutos cargados" };
   }
 
-  if (activeProjectCount > 0) {
-    return { ok: false, message: "No se puede eliminar un cliente con proyectos activos" };
+  if (projectCount > 0) {
+    return { ok: false, message: "No se puede eliminar un cliente con proyectos asociados" };
   }
 
   await prisma.client.delete({ where: { id: clientId } });
-  await prisma.auditLog.create({
-    data: { action: AuditAction.DELETE, entity: "Client", entityId: clientId, actorId: session.user.id }
-  });
 
   revalidateResourceSurfaces();
   return { ok: true, message: "Cliente eliminado" };
+}
+
+export async function deleteClients(input: unknown) {
+  await requireRole([Role.ADMINISTRADOR]);
+  const parsed = bulkClientDeleteSchema.safeParse(input);
+
+  if (!parsed.success) {
+    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Selecciona clientes para eliminar" };
+  }
+
+  const ids = Array.from(new Set(parsed.data.clientIds));
+  const clients = await prisma.client.findMany({
+    where: { id: { in: ids } },
+    select: {
+      id: true,
+      name: true,
+      _count: { select: { timeEntries: true, projects: true } }
+    }
+  });
+  const deletable = clients.filter((client) => client._count.timeEntries === 0 && client._count.projects === 0);
+  const blocked = clients.filter((client) => client._count.timeEntries > 0 || client._count.projects > 0);
+
+  if (!deletable.length) {
+    return { ok: false, message: "No hay clientes eliminables en la selección", blocked: blocked.map((client) => client.name) };
+  }
+
+  await prisma.client.deleteMany({ where: { id: { in: deletable.map((client) => client.id) } } });
+  revalidateResourceSurfaces();
+
+  return {
+    ok: true,
+    message: `${deletable.length} clientes eliminados${blocked.length ? `; ${blocked.length} quedaron bloqueados por proyectos u horas` : ""}`,
+    deletedIds: deletable.map((client) => client.id),
+    blocked: blocked.map((client) => client.name)
+  };
+}
+
+export async function updateVisibleProjects(input: unknown) {
+  const session = await requireSession();
+  const parsed = projectVisibilitySchema.safeParse(input);
+
+  if (!parsed.success) {
+    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Selección inválida" };
+  }
+
+  const selectedIds = new Set(parsed.data.projectIds);
+  const activeProjects = await prisma.project.findMany({
+    where: { status: ProjectStatus.ACTIVE },
+    select: { id: true }
+  });
+
+  await prisma.$transaction(
+    activeProjects.map((project) =>
+      prisma.userProjectVisibility.upsert({
+        where: { userId_projectId: { userId: session.user.id, projectId: project.id } },
+        update: { visible: selectedIds.has(project.id) },
+        create: { userId: session.user.id, projectId: project.id, visible: selectedIds.has(project.id) }
+      })
+    )
+  );
+
+  revalidatePath("/time");
+  revalidateTag("time-entry-context");
+  return { ok: true, message: "Proyectos visibles actualizados" };
 }
 
 export async function refreshResourceCatalogs() {
@@ -301,23 +379,13 @@ export async function addAllowedEmail(input: unknown) {
   const parsed = allowedEmailSchema.safeParse(input);
 
   if (!parsed.success) {
-    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos invalidos" };
+    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos inválidos" };
   }
 
   const allowedEmail = await prisma.allowedEmail.upsert({
     where: { email: parsed.data.email },
     update: { role: parsed.data.role as Role },
     create: { email: parsed.data.email, role: parsed.data.role as Role }
-  });
-
-  await prisma.auditLog.create({
-    data: {
-      action: AuditAction.ROLE_CHANGE,
-      entity: "AllowedEmail",
-      entityId: allowedEmail.id,
-      actorId: session.user.id,
-      metadata: { email: allowedEmail.email, role: allowedEmail.role }
-    }
   });
 
   revalidatePath("/admin");
@@ -336,11 +404,11 @@ export async function addAllowedEmail(input: unknown) {
 }
 
 export async function assignUserRole(input: unknown) {
-  const session = await requireSuperadmin();
+  await requireSuperadmin();
   const parsed = roleAssignmentSchema.safeParse(input);
 
   if (!parsed.success) {
-    return { ok: false, message: "Datos invalidos" };
+    return { ok: false, message: "Datos inválidos" };
   }
 
   const role = parsed.data.role as Role;
@@ -349,16 +417,6 @@ export async function assignUserRole(input: unknown) {
     data: {
       role,
       status: parsed.data.status as UserStatus | undefined
-    }
-  });
-
-  await prisma.auditLog.create({
-    data: {
-      action: AuditAction.ROLE_CHANGE,
-      entity: "User",
-      entityId: parsed.data.userId,
-      actorId: session.user.id,
-      metadata: { role, status: parsed.data.status }
     }
   });
 
@@ -390,15 +448,15 @@ export async function deleteDisabledUser(input: unknown) {
   const parsed = disabledUserDeleteSchema.safeParse(input);
 
   if (!parsed.success) {
-    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos invalidos" };
+    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos inválidos" };
   }
 
   if (parsed.data.confirmation !== "ELIMINAR") {
-    return { ok: false, message: "Escribi ELIMINAR para confirmar" };
+    return { ok: false, message: "Escribí ELIMINAR para confirmar" };
   }
 
   if (parsed.data.userId === session.user.id) {
-    return { ok: false, message: "No podes eliminar tu propio usuario" };
+    return { ok: false, message: "No podés eliminar tu propio usuario" };
   }
 
   const user = await prisma.user.findUnique({
@@ -417,7 +475,7 @@ export async function deleteDisabledUser(input: unknown) {
   const impact = await getDisabledUserDeletionImpact(user.id);
 
   if (parsed.data.strategy === "PHYSICAL" && !impact.canDeletePhysically) {
-    return { ok: false, message: "El usuario tiene referencias historicas; usa archivado, soft delete o anonimizacion" };
+    return { ok: false, message: "El usuario tiene referencias históricas; usa archivado, soft delete o anonimizacion" };
   }
 
   await prisma.$transaction(async (tx) => {
@@ -450,19 +508,6 @@ export async function deleteDisabledUser(input: unknown) {
       });
     }
 
-    await tx.auditLog.create({
-      data: {
-        action: AuditAction.DELETE,
-        entity: "User",
-        entityId: user.id,
-        actorId: session.user.id,
-        metadata: {
-          strategy: parsed.data.strategy,
-          canDeletePhysically: impact.canDeletePhysically,
-          blockingReferences: impact.blockingReferences
-        }
-      }
-    });
   });
 
   revalidatePath("/admin");
@@ -486,12 +531,13 @@ async function getDisabledUserDeletionImpact(userId: string) {
     favorites,
     dashboardPreferences,
     workSchedule,
-    auditLogs,
     timeEntries,
     assignedTrackingTasks,
     createdTrackingTasks,
     trackingHistory,
     trackingAttachments,
+    createdTimeEntryThreads,
+    timeEntryComments,
     ownedGoals,
     goalExclusions,
     goalMetrics,
@@ -505,12 +551,13 @@ async function getDisabledUserDeletionImpact(userId: string) {
     prisma.timeEntryFavorite.count({ where: { userId } }),
     prisma.userDashboardPreference.count({ where: { userId } }),
     prisma.workSchedule.count({ where: { userId } }),
-    prisma.auditLog.count({ where: { actorId: userId } }),
     prisma.timeEntry.count({ where: { userId } }),
     prisma.trackingTask.count({ where: { assigneeId: userId } }),
     prisma.trackingTask.count({ where: { createdById: userId } }),
     prisma.trackingTaskHistory.count({ where: { actorId: userId } }),
     prisma.trackingTaskAttachment.count({ where: { createdById: userId } }),
+    prisma.timeEntryThread.count({ where: { createdById: userId } }),
+    prisma.timeEntryComment.count({ where: { authorId: userId } }),
     prisma.goalObjective.count({ where: { ownerId: userId } }),
     prisma.goalObjectiveExclusion.count({ where: { userId } }),
     prisma.goalMetric.count({ where: { userId } }),
@@ -519,12 +566,13 @@ async function getDisabledUserDeletionImpact(userId: string) {
     prisma.goalCheckpoint.count({ where: { userId } })
   ]);
   const blockingReferences =
-    auditLogs +
     timeEntries +
     assignedTrackingTasks +
     createdTrackingTasks +
     trackingHistory +
     trackingAttachments +
+    createdTimeEntryThreads +
+    timeEntryComments +
     ownedGoals +
     goalMetrics +
     goalCompliances +
@@ -538,12 +586,13 @@ async function getDisabledUserDeletionImpact(userId: string) {
     favorites,
     dashboardPreferences,
     workSchedule,
-    auditLogs,
     timeEntries,
     assignedTrackingTasks,
     createdTrackingTasks,
     trackingHistory,
     trackingAttachments,
+    createdTimeEntryThreads,
+    timeEntryComments,
     ownedGoals,
     goalExclusions,
     goalMetrics,
@@ -556,7 +605,7 @@ async function getDisabledUserDeletionImpact(userId: string) {
 }
 
 export async function deleteAllowedEmail(allowedEmailId: string) {
-  const session = await requireSuperadmin();
+  await requireSuperadmin();
   const allowedEmail = await prisma.allowedEmail.findUnique({
     where: { id: allowedEmailId },
     select: { id: true, email: true, role: true }
@@ -569,8 +618,6 @@ export async function deleteAllowedEmail(allowedEmailId: string) {
   if (allowedEmail.email === (process.env.SUPERADMIN_EMAIL ?? "").trim().toLowerCase()) {
     return { ok: false, message: "No se puede eliminar el superadmin inicial" };
   }
-
-  const impact = await getAllowedEmailDeletionImpact(allowedEmail.email);
 
   await prisma.$transaction(async (tx) => {
     const user = await tx.user.findUnique({
@@ -604,20 +651,6 @@ export async function deleteAllowedEmail(allowedEmailId: string) {
       ]);
     }
 
-    await tx.auditLog.create({
-      data: {
-        action: AuditAction.DELETE,
-        entity: "AllowedEmail",
-        entityId: allowedEmail.id,
-        actorId: session.user.id,
-        metadata: {
-          email: allowedEmail.email,
-          role: allowedEmail.role,
-          strategy: "logical_user_archive",
-          impact
-        }
-      }
-    });
   });
 
   revalidatePath("/admin");
@@ -714,7 +747,7 @@ export async function updateThemeVariant(input: unknown) {
   const parsed = themeVariantSchema.safeParse(input);
 
   if (!parsed.success) {
-    return { ok: false, message: "Tema invalido" };
+    return { ok: false, message: "Tema inválido" };
   }
 
   await prisma.user.update({
@@ -726,11 +759,11 @@ export async function updateThemeVariant(input: unknown) {
 }
 
 export async function upsertCategory(input: unknown) {
-  const session = await requireSuperadmin();
+  await requireSuperadmin();
   const parsed = categorySchema.safeParse(input);
 
   if (!parsed.success) {
-    return { ok: false, message: "Datos invalidos" };
+    return { ok: false, message: "Datos inválidos" };
   }
 
   const data = {
@@ -739,23 +772,21 @@ export async function upsertCategory(input: unknown) {
     kind: parsed.data.kind,
     active: parsed.data.active
   };
-  const category: Category = parsed.data.id
-    ? await prisma.category.update({ where: { id: parsed.data.id }, data })
-    : await prisma.category.create({ data });
-
-  await prisma.auditLog.create({
-    data: { action: AuditAction.CONFIG_CHANGE, entity: "Category", entityId: category.id, actorId: session.user.id }
-  });
+  if (parsed.data.id) {
+    await prisma.category.update({ where: { id: parsed.data.id }, data });
+  } else {
+    await prisma.category.create({ data });
+  }
 
   revalidatePath("/admin");
   revalidatePath("/time");
   revalidateTag("time-entry-context");
   revalidateTag("dashboard-metrics");
-  return { ok: true, message: parsed.data.id ? "Categoria actualizada" : "Categoria creada" };
+  return { ok: true, message: parsed.data.id ? "Categoría actualizada" : "Categoría creada" };
 }
 
 export async function deleteCategory(categoryId: string) {
-  const session = await requireSuperadmin();
+  await requireSuperadmin();
   const count = await prisma.timeEntry.count({ where: { categoryId } });
 
   if (count > 0) {
@@ -764,25 +795,22 @@ export async function deleteCategory(categoryId: string) {
     revalidatePath("/time");
     revalidateTag("time-entry-context");
     revalidateTag("dashboard-metrics");
-    return { ok: true, message: "Categoria desactivada porque tiene minutos asociados" };
+    return { ok: true, message: "Categoría desactivada porque tiene minutos asociados" };
   }
 
   await prisma.category.delete({ where: { id: categoryId } });
-  await prisma.auditLog.create({
-    data: { action: AuditAction.CONFIG_CHANGE, entity: "Category", entityId: categoryId, actorId: session.user.id }
-  });
   revalidatePath("/admin");
   revalidateTag("time-entry-context");
   revalidateTag("dashboard-metrics");
-  return { ok: true, message: "Categoria eliminada" };
+  return { ok: true, message: "Categoría eliminada" };
 }
 
 export async function upsertProjectType(input: unknown) {
-  const session = await requireSuperadmin();
+  await requireSuperadmin();
   const parsed = projectTypeSchema.safeParse(input);
 
   if (!parsed.success) {
-    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos invalidos" };
+    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos inválidos" };
   }
 
   const data = {
@@ -792,13 +820,11 @@ export async function upsertProjectType(input: unknown) {
     monthlyReset: parsed.data.monthlyReset
   };
 
-  const projectType = parsed.data.id
-    ? await prisma.projectType.update({ where: { id: parsed.data.id }, data })
-    : await prisma.projectType.create({ data });
-
-  await prisma.auditLog.create({
-    data: { action: AuditAction.CONFIG_CHANGE, entity: "ProjectType", entityId: projectType.id, actorId: session.user.id }
-  });
+  if (parsed.data.id) {
+    await prisma.projectType.update({ where: { id: parsed.data.id }, data });
+  } else {
+    await prisma.projectType.create({ data });
+  }
 
   revalidatePath("/admin");
   revalidatePath("/projects");
@@ -809,7 +835,7 @@ export async function upsertProjectType(input: unknown) {
 }
 
 export async function deleteProjectType(projectTypeId: string) {
-  const session = await requireSuperadmin();
+  await requireSuperadmin();
   const count = await prisma.project.count({ where: { projectTypeId } });
 
   if (count > 0) {
@@ -822,9 +848,6 @@ export async function deleteProjectType(projectTypeId: string) {
   }
 
   await prisma.projectType.delete({ where: { id: projectTypeId } });
-  await prisma.auditLog.create({
-    data: { action: AuditAction.CONFIG_CHANGE, entity: "ProjectType", entityId: projectTypeId, actorId: session.user.id }
-  });
 
   revalidatePath("/admin");
   revalidatePath("/projects");
@@ -834,11 +857,11 @@ export async function deleteProjectType(projectTypeId: string) {
 }
 
 export async function updateWorkSchedule(input: unknown) {
-  const session = await requireSuperadmin();
+  await requireSuperadmin();
   const parsed = workScheduleSchema.safeParse(input);
 
   if (!parsed.success) {
-    return { ok: false, message: "Datos invalidos" };
+    return { ok: false, message: "Datos inválidos" };
   }
 
   await prisma.workSchedule.upsert({
@@ -858,19 +881,13 @@ export async function updateWorkSchedule(input: unknown) {
     }
   });
 
-  await prisma.auditLog.create({
-    data: { action: AuditAction.CONFIG_CHANGE, entity: "WorkSchedule", entityId: parsed.data.userId, actorId: session.user.id }
-  });
-
   revalidatePath("/team");
   revalidatePath("/admin");
   return { ok: true, message: "Horario laboral actualizado" };
 }
 
-export async function logReportExport(format: "CSV" | "XLSX" | "PDF" | "MASTER_XLSX") {
-  const session = await requireSession();
-
-  await prisma.auditLog.create({
-    data: { action: AuditAction.EXPORT, entity: "Report", actorId: session.user.id, metadata: { format } }
-  });
+export async function logReportExport(_format: "CSV" | "XLSX" | "PDF" | "MASTER_XLSX") {
+  void _format;
+  await requireSession();
+  return { ok: true };
 }

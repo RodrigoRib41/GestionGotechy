@@ -41,7 +41,7 @@ type GoalForEvaluation = {
 const fallbackGoal = {
   id: "default-min-expected",
   name: "Mantener 60% del total esperado",
-  description: "Todos los dias laborales cargados deben llegar al menos al 50%.",
+  description: "Todos los días laborales cargados deben llegar al menos al 50%.",
   metricKind: "MIN_EXPECTED_PERCENT",
   period: "WEEKLY",
   targetPercent: 60,
@@ -676,7 +676,7 @@ function evaluateGoal(goal: GoalForEvaluation, summary: ReturnType<typeof summar
   switch (goal.metricKind) {
     case "DAILY_MIN_PERCENT": {
       const met = summary.dailyCompletionPercent >= targetPercent - tolerance;
-      return { percent: summary.dailyCompletionPercent, met, reason: `${summary.dailyCompletionPercent}% de dias laborales cumplen el minimo` };
+      return { percent: summary.dailyCompletionPercent, met, reason: `${summary.dailyCompletionPercent}% de días laborales cumplen el mínimo` };
     }
     case "MIN_WEEKLY_MINUTES": {
       const percent = targetMinutes ? Math.round((summary.actualMinutes / targetMinutes) * 100) : totalPercent;
@@ -689,7 +689,7 @@ function evaluateGoal(goal: GoalForEvaluation, summary: ReturnType<typeof summar
     case "MIN_ACTIVE_DAYS": {
       const targetDays = Math.max(1, targetMinutes);
       const percent = Math.round((summary.activeDays / targetDays) * 100);
-      return { percent, met: summary.activeDays >= targetDays, reason: `${summary.activeDays} dias con actividad` };
+      return { percent, met: summary.activeDays >= targetDays, reason: `${summary.activeDays} días con actividad` };
     }
     case "PRODUCTIVE_PERCENT": {
       const met = productivePercent >= targetPercent - tolerance;
@@ -710,7 +710,7 @@ function evaluateGoal(goal: GoalForEvaluation, summary: ReturnType<typeof summar
         : summary.elapsedWorkdays;
       const everyDayMet = dailyMin ? summary.elapsedWorkdays === 0 || daysMet === summary.elapsedWorkdays : true;
       const met = totalPercent >= targetPercent - tolerance && everyDayMet;
-      return { percent: totalPercent, met, reason: `${totalPercent}% del esperado${dailyMin ? `, minimo diario ${dailyMin}%` : ""}` };
+      return { percent: totalPercent, met, reason: `${totalPercent}% del esperado${dailyMin ? `, mínimo diario ${dailyMin}%` : ""}` };
     }
   }
 }

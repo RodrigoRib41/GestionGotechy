@@ -89,7 +89,7 @@ async function seedProduction() {
 
   const goalData = {
     name: "Mantener 60% del total esperado",
-    description: "Todos los dias laborales deben tener al menos 50% registrado.",
+    description: "Todos los días laborales deben tener al menos 50% registrado.",
     metricKind: "MIN_EXPECTED_PERCENT",
     period: "WEEKLY",
     targetPercent: 60,

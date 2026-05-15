@@ -51,6 +51,7 @@ export async function getTimeEntryContext() {
       userId: "demo",
       projects: demoProjects,
       categories: demoCategories,
+      visibleProjectIds: demoProjects.map((project) => project.id),
       favorites: [],
       personalMetrics: demoPersonalMetrics,
       goalProgress: [],
@@ -67,7 +68,7 @@ export async function getTimeEntryContext() {
     const { projects, categories } = await getTimeEntryCatalogs();
     const projectIds = projects.map((project) => project.id);
     const monthlyProjectIds = projects.filter((project) => project.projectType?.monthlyReset).map((project) => project.id);
-    const [recentEntries, favorites, workSchedule, personalEntries, activeGoals, projectTotals, monthlyProjectTotals] = await Promise.all([
+    const [recentEntries, favorites, workSchedule, personalEntries, activeGoals, projectTotals, monthlyProjectTotals, visibilityPreferences] = await Promise.all([
       prisma.timeEntry.findMany({
         where: { userId, date: { gte: thirtyDaysAgo } },
         select: {
@@ -83,7 +84,28 @@ export async function getTimeEntryContext() {
           project: { select: { name: true } },
           client: { select: { name: true } },
           category: { select: { name: true, kind: true } },
-          user: { select: { name: true, email: true } }
+          user: { select: { name: true, email: true } },
+          commentThread: {
+            select: {
+              id: true,
+              status: true,
+              createdById: true,
+              resolvedAt: true,
+              createdAt: true,
+              createdBy: { select: { name: true, email: true } },
+              reads: { where: { userId }, select: { userId: true, lastReadAt: true } },
+              comments: {
+                select: {
+                  id: true,
+                  message: true,
+                  authorId: true,
+                  createdAt: true,
+                  author: { select: { name: true, email: true } }
+                },
+                orderBy: { createdAt: "asc" }
+              }
+            }
+          }
         },
         orderBy: [{ date: "desc" }, { updatedAt: "desc" }]
       }),
@@ -151,7 +173,11 @@ export async function getTimeEntryContext() {
             where: { projectId: { in: monthlyProjectIds }, date: { gte: startOfMonth(now) } },
             _sum: { minutes: true, overtimeMinutes: true }
           })
-        : Promise.resolve([])
+        : Promise.resolve([]),
+      prisma.userProjectVisibility.findMany({
+        where: { userId },
+        select: { projectId: true, visible: true }
+      })
     ]);
 
     const todayStart = startOfDay(now);
@@ -179,6 +205,8 @@ export async function getTimeEntryContext() {
     const monthlyTotalsByProject = new Map(
       monthlyProjectTotals.map((item) => [item.projectId, (item._sum.minutes ?? 0) + (item._sum.overtimeMinutes ?? 0)])
     );
+    const visibilityByProject = new Map(visibilityPreferences.map((item) => [item.projectId, item.visible]));
+    const visibleProjectIds = projects.filter((project) => visibilityByProject.get(project.id) !== false).map((project) => project.id);
 
     return {
       userId,
@@ -201,6 +229,7 @@ export async function getTimeEntryContext() {
         kind: category.kind,
         description: category.description
       })),
+      visibleProjectIds,
       favorites: favorites.map((favorite) => ({
         id: favorite.id,
         name: favorite.name,
@@ -250,7 +279,8 @@ export async function getTimeEntryContext() {
         detail: entry.detail,
         observations: entry.observations,
         minutes: entry.minutes,
-        overtimeMinutes: entry.overtimeMinutes
+        overtimeMinutes: entry.overtimeMinutes,
+        commentThread: entry.commentThread ? serializeTimeThread(entry.commentThread, userId) : null
       }))
     };
   } catch {
@@ -258,6 +288,7 @@ export async function getTimeEntryContext() {
       userId: "demo",
       projects: demoProjects,
       categories: demoCategories,
+      visibleProjectIds: demoProjects.map((project) => project.id),
       favorites: [],
       personalMetrics: demoPersonalMetrics,
       goalProgress: [],
@@ -265,6 +296,48 @@ export async function getTimeEntryContext() {
       recentEntries: demoTimeEntries
     };
   }
+}
+
+function serializeTimeThread(
+  thread: {
+    id: string;
+    status: string;
+    createdById: string;
+    resolvedAt: Date | null;
+    createdAt: Date;
+    createdBy: { name: string | null; email: string };
+    reads: Array<{ userId: string; lastReadAt: Date }>;
+    comments: Array<{
+      id: string;
+      message: string;
+      authorId: string;
+      createdAt: Date;
+      author: { name: string | null; email: string };
+    }>;
+  },
+  currentUserId: string
+) {
+  const latestRead = thread.reads.find((read) => read.userId === currentUserId)?.lastReadAt ?? null;
+
+  return {
+    id: thread.id,
+    status: thread.status,
+    createdById: thread.createdById,
+    createdBy: thread.createdBy.name ?? thread.createdBy.email,
+    resolvedAt: thread.resolvedAt?.toISOString() ?? null,
+    createdAt: thread.createdAt.toISOString(),
+    unread: latestRead
+      ? thread.comments.some((comment) => comment.authorId !== currentUserId && comment.createdAt > latestRead)
+      : thread.comments.some((comment) => comment.authorId !== currentUserId),
+    comments: thread.comments.map((comment) => ({
+      id: comment.id,
+      message: comment.message,
+      authorId: comment.authorId,
+      author: comment.author.name ?? comment.author.email,
+      createdAt: comment.createdAt.toISOString(),
+      mine: comment.authorId === currentUserId
+    }))
+  };
 }
 
 function buildGoalProgress(

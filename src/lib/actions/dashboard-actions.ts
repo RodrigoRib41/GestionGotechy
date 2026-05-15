@@ -1,6 +1,5 @@
 "use server";
 
-import { AuditAction } from "@prisma/client";
 import { revalidatePath, revalidateTag } from "next/cache";
 
 import { prisma } from "@/lib/prisma";
@@ -17,7 +16,7 @@ export async function pinDashboard(input: unknown) {
   const parsed = dashboardPreferenceSchema.safeParse(input);
 
   if (!parsed.success) {
-    return { ok: false, message: "Dashboard invalido" };
+    return { ok: false, message: "Dashboard inválido" };
   }
 
   const current = await prisma.userDashboardPreference.findMany({
@@ -27,7 +26,7 @@ export async function pinDashboard(input: unknown) {
   });
 
   if (!current.some((item) => item.dashboardId === parsed.data.dashboardId) && current.length >= maxPinnedDashboards) {
-    return { ok: false, message: "Ya tenes 6 dashboards fijados" };
+    return { ok: false, message: "Ya tenés 6 dashboards fijados" };
   }
 
   const nextPosition = parsed.data.position ?? current.length;
@@ -35,16 +34,6 @@ export async function pinDashboard(input: unknown) {
     where: { userId_dashboardId: { userId: session.user.id, dashboardId: parsed.data.dashboardId } },
     update: { position: nextPosition },
     create: { userId: session.user.id, dashboardId: parsed.data.dashboardId, position: nextPosition }
-  });
-
-  await prisma.auditLog.create({
-    data: {
-      action: AuditAction.CONFIG_CHANGE,
-      entity: "DashboardPreference",
-      entityId: parsed.data.dashboardId,
-      actorId: session.user.id,
-      metadata: { pinned: true }
-    }
   });
 
   revalidateTag(`dashboard-preferences:${session.user.id}`);
@@ -59,7 +48,7 @@ export async function unpinDashboard(input: unknown) {
   const parsed = dashboardPreferenceSchema.safeParse(input);
 
   if (!parsed.success) {
-    return { ok: false, message: "Dashboard invalido" };
+    return { ok: false, message: "Dashboard inválido" };
   }
 
   await prisma.userDashboardPreference.deleteMany({
@@ -80,16 +69,6 @@ export async function unpinDashboard(input: unknown) {
       })
     )
   );
-
-  await prisma.auditLog.create({
-    data: {
-      action: AuditAction.CONFIG_CHANGE,
-      entity: "DashboardPreference",
-      entityId: parsed.data.dashboardId,
-      actorId: session.user.id,
-      metadata: { pinned: false }
-    }
-  });
 
   revalidateTag(`dashboard-preferences:${session.user.id}`);
   revalidatePath("/");

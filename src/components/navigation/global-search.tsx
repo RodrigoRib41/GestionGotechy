@@ -88,7 +88,7 @@ export function GlobalSearch() {
       />
       <div className="absolute right-1 top-1 flex items-center gap-1">
         {query ? (
-          <Button aria-label="Limpiar busqueda" className="h-7 w-7" size="icon" variant="ghost" onClick={() => setQuery("")}>
+          <Button aria-label="Limpiar búsqueda" className="h-7 w-7" size="icon" variant="ghost" onClick={() => setQuery("")}>
             <X className="h-3.5 w-3.5" />
           </Button>
         ) : null}

@@ -2,14 +2,14 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ColumnDef } from "@tanstack/react-table";
-import { BriefcaseBusiness, Pencil, Plus, Power, RefreshCw, X } from "lucide-react";
+import { BriefcaseBusiness, Pencil, Plus, Power, RefreshCw, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useForm } from "react-hook-form";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { z } from "zod";
 
-import { createProject, deleteProject, refreshResourceCatalogs, toggleProjectStatus, updateProject } from "@/lib/actions/resource-actions";
+import { createProject, deleteProject, deleteProjects, refreshResourceCatalogs, toggleProjectStatus, updateProject } from "@/lib/actions/resource-actions";
 import { projectSchema } from "@/lib/validators";
 import { formatMinutes } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -51,6 +51,7 @@ export function ProjectsClient({
 }) {
   const [isPending, startTransition] = useTransition();
   const [localProjects, setLocalProjects] = useState(projects);
+  const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(() => new Set());
   const [statusFilter, setStatusFilter] = useState<"ACTIVE" | "INACTIVE" | "ALL">("ACTIVE");
   const router = useRouter();
   const form = useForm<FormValues>({
@@ -77,9 +78,44 @@ export function ProjectsClient({
 
   useEffect(() => {
     setLocalProjects(projects);
+    setSelectedProjectIds(new Set());
   }, [projects]);
 
   const columns: ColumnDef<ProjectRow>[] = [
+    {
+      id: "select",
+      enableSorting: false,
+      header: () => (
+        <input
+          aria-label="Seleccionar proyectos visibles"
+          checked={visibleProjects.length > 0 && visibleProjects.every((project) => selectedProjectIds.has(project.id))}
+          type="checkbox"
+          onChange={(event) =>
+            setSelectedProjectIds((current) => {
+              const next = new Set(current);
+              if (event.target.checked) visibleProjects.forEach((project) => next.add(project.id));
+              else visibleProjects.forEach((project) => next.delete(project.id));
+              return next;
+            })
+          }
+        />
+      ),
+      cell: ({ row }) => (
+        <input
+          aria-label={`Seleccionar ${row.original.name}`}
+          checked={selectedProjectIds.has(row.original.id)}
+          type="checkbox"
+          onChange={(event) =>
+            setSelectedProjectIds((current) => {
+              const next = new Set(current);
+              if (event.target.checked) next.add(row.original.id);
+              else next.delete(row.original.id);
+              return next;
+            })
+          }
+        />
+      )
+    },
     {
       accessorKey: "name",
       header: "Proyecto",
@@ -254,6 +290,26 @@ export function ProjectsClient({
     });
   }
 
+  function deleteSelectedProjects() {
+    const ids = Array.from(selectedProjectIds);
+    if (!ids.length) return;
+    if (!window.confirm(`¿Eliminar ${ids.length} proyectos seleccionados? Solo se eliminarán los que no tengan horas ni tareas asociadas.`)) return;
+
+    startTransition(async () => {
+      const result = await deleteProjects({ projectIds: ids });
+      if (!result.ok) {
+        toast.error(result.message);
+        return;
+      }
+
+      setLocalProjects((current) => current.filter((project) => !result.deletedIds?.includes(project.id)));
+      setSelectedProjectIds(new Set());
+      toast.success(result.message);
+      if (result.blocked?.length) toast.warning(`Bloqueados: ${result.blocked.slice(0, 3).join(", ")}${result.blocked.length > 3 ? "..." : ""}`);
+      router.refresh();
+    });
+  }
+
   return (
     <div className="grid gap-6 xl:grid-cols-[380px_1fr]">
       <Card>
@@ -322,6 +378,11 @@ export function ProjectsClient({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <CardTitle>Proyectos</CardTitle>
             <div className="flex flex-wrap items-center gap-2">
+              {selectedProjectIds.size ? <Badge variant="warning">{selectedProjectIds.size} seleccionados</Badge> : null}
+              <Button disabled={isPending || !selectedProjectIds.size} size="sm" variant="destructive" onClick={deleteSelectedProjects}>
+                <Trash2 className="mr-2 h-3.5 w-3.5" />
+                Eliminar seleccionados
+              </Button>
               <Button disabled={isPending} size="sm" variant="outline" onClick={refreshData}>
                 <RefreshCw className="mr-2 h-3.5 w-3.5" />
                 Actualizar
@@ -334,7 +395,7 @@ export function ProjectsClient({
                     type="button"
                     onClick={() => setStatusFilter(status)}
                   >
-                    {status === "ACTIVE" ? "Activos" : status === "INACTIVE" ? "Inactivos" : "Todos"}
+                    {status === "ACTIVE" ? "Activos" : status === "INACTIVE" ? "Inactivos" : "Todos los estados"}
                   </button>
                 ))}
               </div>

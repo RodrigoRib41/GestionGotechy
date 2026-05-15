@@ -2,14 +2,14 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ColumnDef } from "@tanstack/react-table";
-import { Building2, Pencil, Plus, RefreshCw, X } from "lucide-react";
+import { Building2, Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { useEffect, useState, useTransition } from "react";
 import { useForm } from "react-hook-form";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { z } from "zod";
 
-import { createClient, deleteClient, refreshResourceCatalogs, updateClient } from "@/lib/actions/resource-actions";
+import { createClient, deleteClient, deleteClients, refreshResourceCatalogs, updateClient } from "@/lib/actions/resource-actions";
 import { clientSchema } from "@/lib/validators";
 import { formatMinutes } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -37,6 +37,7 @@ type FormValues = z.input<typeof clientSchema>;
 export function ClientsClient({ clients }: { clients: ClientRow[] }) {
   const [isPending, startTransition] = useTransition();
   const [localClients, setLocalClients] = useState(clients);
+  const [selectedClientIds, setSelectedClientIds] = useState<Set<string>>(() => new Set());
   const router = useRouter();
   const form = useForm<FormValues>({
     resolver: zodResolver(clientSchema),
@@ -46,9 +47,44 @@ export function ClientsClient({ clients }: { clients: ClientRow[] }) {
 
   useEffect(() => {
     setLocalClients(clients);
+    setSelectedClientIds(new Set());
   }, [clients]);
 
   const columns: ColumnDef<ClientRow>[] = [
+    {
+      id: "select",
+      enableSorting: false,
+      header: () => (
+        <input
+          aria-label="Seleccionar clientes"
+          checked={localClients.length > 0 && localClients.every((client) => selectedClientIds.has(client.id))}
+          type="checkbox"
+          onChange={(event) =>
+            setSelectedClientIds((current) => {
+              const next = new Set(current);
+              if (event.target.checked) localClients.forEach((client) => next.add(client.id));
+              else localClients.forEach((client) => next.delete(client.id));
+              return next;
+            })
+          }
+        />
+      ),
+      cell: ({ row }) => (
+        <input
+          aria-label={`Seleccionar ${row.original.name}`}
+          checked={selectedClientIds.has(row.original.id)}
+          type="checkbox"
+          onChange={(event) =>
+            setSelectedClientIds((current) => {
+              const next = new Set(current);
+              if (event.target.checked) next.add(row.original.id);
+              else next.delete(row.original.id);
+              return next;
+            })
+          }
+        />
+      )
+    },
     {
       accessorKey: "name",
       header: "Cliente",
@@ -169,6 +205,26 @@ export function ClientsClient({ clients }: { clients: ClientRow[] }) {
     });
   }
 
+  function deleteSelectedClients() {
+    const ids = Array.from(selectedClientIds);
+    if (!ids.length) return;
+    if (!window.confirm(`¿Eliminar ${ids.length} clientes seleccionados? Solo se eliminarán los que no tengan proyectos ni horas asociadas.`)) return;
+
+    startTransition(async () => {
+      const result = await deleteClients({ clientIds: ids });
+      if (!result.ok) {
+        toast.error(result.message);
+        return;
+      }
+
+      setLocalClients((current) => current.filter((client) => !result.deletedIds?.includes(client.id)));
+      setSelectedClientIds(new Set());
+      toast.success(result.message);
+      if (result.blocked?.length) toast.warning(`Bloqueados: ${result.blocked.slice(0, 3).join(", ")}${result.blocked.length > 3 ? "..." : ""}`);
+      router.refresh();
+    });
+  }
+
   return (
     <div className="grid gap-6 xl:grid-cols-[380px_1fr]">
       <Card>
@@ -213,10 +269,17 @@ export function ClientsClient({ clients }: { clients: ClientRow[] }) {
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <CardTitle>Clientes</CardTitle>
-            <Button disabled={isPending} size="sm" variant="outline" onClick={refreshData}>
-              <RefreshCw className="mr-2 h-3.5 w-3.5" />
-              Actualizar
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              {selectedClientIds.size ? <Badge variant="warning">{selectedClientIds.size} seleccionados</Badge> : null}
+              <Button disabled={isPending || !selectedClientIds.size} size="sm" variant="destructive" onClick={deleteSelectedClients}>
+                <Trash2 className="mr-2 h-3.5 w-3.5" />
+                Eliminar seleccionados
+              </Button>
+              <Button disabled={isPending} size="sm" variant="outline" onClick={refreshData}>
+                <RefreshCw className="mr-2 h-3.5 w-3.5" />
+                Actualizar
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>

@@ -153,7 +153,7 @@ export async function getClientsPageData() {
   }
 }
 
-export async function getReportsData() {
+export async function getReportsData(currentUserId = "") {
   if (!process.env.DATABASE_URL) {
     return demoTimeEntries.map((entry) => ({
       ...entry,
@@ -173,7 +173,28 @@ export async function getReportsData() {
         user: { select: { id: true, name: true, email: true } },
         project: { select: { id: true, name: true } },
         client: { select: { id: true, name: true } },
-        category: { select: { name: true, kind: true } }
+        category: { select: { name: true, kind: true } },
+        commentThread: {
+          select: {
+            id: true,
+            status: true,
+            createdById: true,
+            resolvedAt: true,
+            createdAt: true,
+            createdBy: { select: { name: true, email: true } },
+            reads: currentUserId ? { where: { userId: currentUserId }, select: { userId: true, lastReadAt: true } } : { select: { userId: true, lastReadAt: true } },
+            comments: {
+              select: {
+                id: true,
+                message: true,
+                authorId: true,
+                createdAt: true,
+                author: { select: { name: true, email: true } }
+              },
+              orderBy: { createdAt: "asc" }
+            }
+          }
+        }
       },
       orderBy: { date: "desc" },
       take: 1500
@@ -195,7 +216,8 @@ export async function getReportsData() {
       minutes: entry.minutes,
       overtimeMinutes: entry.overtimeMinutes,
       createdAt: entry.createdAt.toISOString(),
-      updatedAt: entry.updatedAt.toISOString()
+      updatedAt: entry.updatedAt.toISOString(),
+      commentThread: entry.commentThread ? serializeResourceTimeThread(entry.commentThread, currentUserId) : null
     }));
   } catch {
     return demoTimeEntries.map((entry) => ({
@@ -210,13 +232,56 @@ export async function getReportsData() {
   }
 }
 
+function serializeResourceTimeThread(
+  thread: {
+    id: string;
+    status: string;
+    createdById: string;
+    resolvedAt: Date | null;
+    createdAt: Date;
+    createdBy: { name: string | null; email: string };
+    reads: Array<{ userId: string; lastReadAt: Date }>;
+    comments: Array<{
+      id: string;
+      message: string;
+      authorId: string;
+      createdAt: Date;
+      author: { name: string | null; email: string };
+    }>;
+  },
+  currentUserId: string
+) {
+  const latestRead = thread.reads.find((read) => read.userId === currentUserId)?.lastReadAt ?? null;
+
+  return {
+    id: thread.id,
+    status: thread.status,
+    createdById: thread.createdById,
+    createdBy: thread.createdBy.name ?? thread.createdBy.email,
+    resolvedAt: thread.resolvedAt?.toISOString() ?? null,
+    createdAt: thread.createdAt.toISOString(),
+    unread: currentUserId
+      ? latestRead
+        ? thread.comments.some((comment) => comment.authorId !== currentUserId && comment.createdAt > latestRead)
+        : thread.comments.some((comment) => comment.authorId !== currentUserId)
+      : false,
+    comments: thread.comments.map((comment) => ({
+      id: comment.id,
+      message: comment.message,
+      authorId: comment.authorId,
+      author: comment.author.name ?? comment.author.email,
+      createdAt: comment.createdAt.toISOString(),
+      mine: comment.authorId === currentUserId
+    }))
+  };
+}
+
 export async function getAdminData() {
   const demoAdmin = {
     users: [],
     allowedEmails: [
       { id: "demo-allowed", email: "rodrigorib41@gmail.com", role: "SUPERADMIN", displayName: "Rodrigo", status: "ACTIVE" }
     ],
-    logs: [],
     categories: [],
     projectTypes: [],
     databaseState: emptyDatabaseState()
@@ -227,7 +292,7 @@ export async function getAdminData() {
   }
 
   try {
-    const [users, allowedEmails, logs, categories, projectTypes] = await Promise.all([
+    const [users, allowedEmails, categories, projectTypes] = await Promise.all([
       prisma.user.findMany({
         where: { status: { notIn: ["ARCHIVED", "DELETED"] } },
         include: { workSchedule: true },
@@ -235,11 +300,6 @@ export async function getAdminData() {
         take: 50
       }),
       prisma.allowedEmail.findMany({ orderBy: { createdAt: "desc" }, take: 200 }),
-      prisma.auditLog.findMany({
-        include: { actor: { select: { name: true, email: true } } },
-        orderBy: { createdAt: "desc" },
-        take: 100
-      }),
       prisma.category.findMany({ orderBy: { name: "asc" } }),
       prisma.projectType.findMany({ orderBy: { name: "asc" } })
     ]);
@@ -267,14 +327,6 @@ export async function getAdminData() {
         role: email.role,
         displayName: email.displayName,
         status: "ACTIVE"
-      })),
-      logs: logs.map((log) => ({
-        id: log.id,
-        action: log.action,
-        entity: log.entity,
-        actorId: log.actorId,
-        actor: log.actor?.name ?? log.actor?.email ?? "Sistema",
-        createdAt: log.createdAt.toISOString()
       })),
       categories: categories.map((category) => ({
         id: category.id,

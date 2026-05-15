@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { Role } from "@prisma/client";
 import {
+  Bell,
   BriefcaseBusiness,
   Building2,
   Clock3,
@@ -23,6 +24,7 @@ import { useTheme } from "next-themes";
 import { ReactNode, useMemo, useState } from "react";
 
 import { signOutAction } from "@/lib/actions/auth-actions";
+import { markAllNotificationsRead, markNotificationRead } from "@/lib/actions/notification-actions";
 import { cn, initials } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -39,7 +41,7 @@ const navItems: Array<{ href: string; label: string; icon: typeof Gauge; allowed
   { href: "/clients", label: "Clientes", icon: Building2, allowedRoles: ["ADMINISTRADOR", "SUPERADMIN"] },
   { href: "/reports", label: "Reportes", icon: Download, allowedRoles: ["ADMINISTRADOR", "SUPERADMIN"] },
   { href: "/team", label: "Colaboradores", icon: UsersRound, allowedRoles: ["SUPERADMIN"] },
-  { href: "/admin", label: "Administracion", icon: Shield, allowedRoles: ["SUPERADMIN"] }
+  { href: "/admin", label: "Administración", icon: Shield, allowedRoles: ["SUPERADMIN"] }
 ];
 
 const titles: Record<string, string> = {
@@ -51,12 +53,36 @@ const titles: Record<string, string> = {
   "/clients": "Clientes",
   "/reports": "Reportes",
   "/team": "Colaboradores",
-  "/admin": "Administracion"
+  "/admin": "Administración"
 };
 
-export function AppShell({ children, hasTrackingAccess = false, user }: { children: ReactNode; hasTrackingAccess?: boolean; user: Session["user"] }) {
+type NotificationSnapshot = {
+  unreadCount: number;
+  items: Array<{
+    id: string;
+    title: string;
+    body: string | null;
+    readAt: string | null;
+    createdAt: string;
+    href: string;
+  }>;
+};
+
+export function AppShell({
+  children,
+  hasTrackingAccess = false,
+  notifications,
+  user
+}: {
+  children: ReactNode;
+  hasTrackingAccess?: boolean;
+  notifications: NotificationSnapshot;
+  user: Session["user"];
+}) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notificationState, setNotificationState] = useState(notifications);
   const { theme, setTheme } = useTheme();
   const visibleItems = useMemo(
     () =>
@@ -147,6 +173,77 @@ export function AppShell({ children, hasTrackingAccess = false, user }: { childr
             <h1 className="truncate text-base font-semibold tracking-normal sm:text-lg">{title}</h1>
           </div>
           <GlobalSearch />
+          <div className="relative">
+            <Button
+              aria-label="Notificaciones"
+              className="relative"
+              onClick={() => setNotificationsOpen((value) => !value)}
+              size="icon"
+              variant="ghost"
+            >
+              <Bell className="h-4 w-4" />
+              {notificationState.unreadCount > 0 ? (
+                <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-semibold text-destructive-foreground">
+                  {notificationState.unreadCount > 9 ? "9+" : notificationState.unreadCount}
+                </span>
+              ) : null}
+            </Button>
+            {notificationsOpen ? (
+              <div className="absolute right-0 top-11 z-50 w-[min(360px,calc(100vw-2rem))] overflow-hidden rounded-lg border bg-card shadow-xl">
+                <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
+                  <div>
+                    <div className="text-sm font-semibold">Notificaciones</div>
+                    <div className="text-xs text-muted-foreground">{notificationState.unreadCount} sin leer</div>
+                  </div>
+                  <Button
+                    className="h-8"
+                    disabled={!notificationState.unreadCount}
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setNotificationState((current) => ({
+                        unreadCount: 0,
+                        items: current.items.map((item) => ({ ...item, readAt: item.readAt ?? new Date().toISOString() }))
+                      }));
+                      void markAllNotificationsRead();
+                    }}
+                  >
+                    Marcar leídas
+                  </Button>
+                </div>
+                <div className="max-h-96 overflow-y-auto">
+                  {notificationState.items.length ? (
+                    notificationState.items.map((item) => (
+                      <button
+                        key={item.id}
+                        className="block w-full border-b px-3 py-3 text-left text-sm transition-colors last:border-0 hover:bg-muted/50"
+                        type="button"
+                        onClick={() => {
+                          setNotificationState((current) => ({
+                            unreadCount: Math.max(0, current.unreadCount - (item.readAt ? 0 : 1)),
+                            items: current.items.map((row) => (row.id === item.id ? { ...row, readAt: row.readAt ?? new Date().toISOString() } : row))
+                          }));
+                          void markNotificationRead(item.id);
+                          window.location.href = item.href;
+                        }}
+                      >
+                        <div className="flex items-start gap-2">
+                          {!item.readAt ? <span className="mt-1.5 h-2 w-2 rounded-full bg-primary" /> : <span className="mt-1.5 h-2 w-2" />}
+                          <div className="min-w-0 flex-1">
+                            <div className="font-medium">{item.title}</div>
+                            {item.body ? <div className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{item.body}</div> : null}
+                            <div className="mt-1 text-[11px] text-muted-foreground">{new Date(item.createdAt).toLocaleString("es-AR")}</div>
+                          </div>
+                        </div>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="px-3 py-8 text-center text-sm text-muted-foreground">No hay notificaciones pendientes.</div>
+                  )}
+                </div>
+              </div>
+            ) : null}
+          </div>
           <ThemeVariantSelector initialVariant={user.themeVariant} />
           <Button
             aria-label="Cambiar tema"

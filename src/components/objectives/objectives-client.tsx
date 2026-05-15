@@ -55,11 +55,11 @@ const emptyDraft: Draft = {
 };
 
 const metricLabels: Record<(typeof goalMetricKindValues)[number], string> = {
-  MIN_EXPECTED_PERCENT: "% minimo esperado",
-  DAILY_MIN_PERCENT: "Dias con minimo diario",
-  MIN_WEEKLY_MINUTES: "Minutos minimos",
+  MIN_EXPECTED_PERCENT: "% mínimo esperado",
+  DAILY_MIN_PERCENT: "Días con mínimo diario",
+  MIN_WEEKLY_MINUTES: "Minutos mínimos",
   MAX_OVERTIME_MINUTES: "Maximo extra",
-  MIN_ACTIVE_DAYS: "Dias activos minimos",
+  MIN_ACTIVE_DAYS: "Días activos mínimos",
   PRIORITY_PROJECT_PERCENT: "% proyecto prioritario",
   PRODUCTIVE_PERCENT: "% productivo",
   REDUCE_INTERNAL_MINUTES: "Reducir interno",
@@ -363,14 +363,14 @@ export function ObjectivesClient({ data }: { data: ObjectivesData }) {
                   <Field label="Tolerancia %">
                     <Input inputMode="numeric" value={draft.tolerancePercent} onChange={(event) => setDraft({ ...draft, tolerancePercent: event.target.value })} />
                   </Field>
-                  <Field label="% minimo diario">
+                  <Field label="% mínimo diario">
                     <Input inputMode="numeric" value={draft.minDailyPercent} onChange={(event) => setDraft({ ...draft, minDailyPercent: event.target.value })} />
                   </Field>
                 </div>
                 <Field label="Alcance">
                   <Select value={draft.global ? "global" : "user"} onChange={(event) => setDraft({ ...draft, global: event.target.value === "global" })}>
                     <option value="global">Global</option>
-                    <option value="user">Colaborador especifico</option>
+                    <option value="user">Colaborador específico</option>
                   </Select>
                 </Field>
                 {!draft.global ? (
@@ -388,7 +388,7 @@ export function ObjectivesClient({ data }: { data: ObjectivesData }) {
                 <div className="grid gap-3 sm:grid-cols-2">
                   <Field label="Cliente">
                     <Select value={draft.clientId} onChange={(event) => setDraft({ ...draft, clientId: event.target.value, projectId: "" })}>
-                      <option value="">Todos</option>
+                      <option value="">Todos los clientes</option>
                       {data.clients.map((client) => (
                         <option key={client.id} value={client.id}>
                           {client.name}
@@ -398,7 +398,7 @@ export function ObjectivesClient({ data }: { data: ObjectivesData }) {
                   </Field>
                   <Field label="Proyecto">
                     <Select value={draft.projectId} onChange={(event) => setDraft({ ...draft, projectId: event.target.value })}>
-                      <option value="">Todos</option>
+                      <option value="">Todos los proyectos</option>
                       {data.projects
                         .filter((project) => !draft.clientId || project.clientId === draft.clientId)
                         .map((project) => (
@@ -409,9 +409,9 @@ export function ObjectivesClient({ data }: { data: ObjectivesData }) {
                     </Select>
                   </Field>
                 </div>
-                <Field label="Categoria">
+                <Field label="Categoría">
                   <Select value={draft.categoryId} onChange={(event) => setDraft({ ...draft, categoryId: event.target.value })}>
-                    <option value="">Todas</option>
+                    <option value="">Todas las categorías</option>
                     {data.categories.map((category) => (
                       <option key={category.id} value={category.id}>
                         {category.name}
@@ -602,7 +602,7 @@ function HistoryDeleteModal({
             <Field label="Alcance">
               <Select value={mode} onChange={(event) => setMode(event.target.value as "range" | "all")}>
                 <option value="range">Rango</option>
-                <option value="all">Todo</option>
+                <option value="all">Todo el historial</option>
               </Select>
             </Field>
             <Field label="Desde">
@@ -613,7 +613,7 @@ function HistoryDeleteModal({
             </Field>
             <Field label="Periodo">
               <Select value={period} onChange={(event) => setPeriod(event.target.value)}>
-                <option value="">Todos</option>
+                <option value="">Todos los períodos</option>
                 <option value="DAILY">Diario</option>
                 <option value="WEEKLY">Semanal</option>
                 <option value="MONTHLY">Mensual</option>
@@ -634,7 +634,7 @@ function HistoryDeleteModal({
             <Field label="PIN">
               <Input autoComplete="off" type="password" value={pin} onChange={(event) => setPin(event.target.value)} />
             </Field>
-            <Field label='Escribi "BORRAR"'>
+            <Field label='Escribí "BORRAR"'>
               <Input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} />
             </Field>
           </div>

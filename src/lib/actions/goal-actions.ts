@@ -1,6 +1,6 @@
 "use server";
 
-import { AuditAction, GoalHistoryFrequency, GoalMetricKind, GoalPeriod, Prisma } from "@prisma/client";
+import { GoalHistoryFrequency, GoalMetricKind, GoalPeriod, Prisma } from "@prisma/client";
 import { revalidatePath, revalidateTag } from "next/cache";
 
 import { prisma } from "@/lib/prisma";
@@ -16,7 +16,7 @@ export async function upsertGoalObjective(input: unknown) {
   const parsed = goalObjectiveSchema.safeParse(input);
 
   if (!parsed.success) {
-    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos invalidos" };
+    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos inválidos" };
   }
 
   const copy = buildGoalCopy(parsed.data);
@@ -51,16 +51,6 @@ export async function upsertGoalObjective(input: unknown) {
       });
     }
 
-    await tx.auditLog.create({
-      data: {
-        action: AuditAction.CONFIG_CHANGE,
-        entity: "GoalObjective",
-        entityId: saved.id,
-        actorId: session.user.id,
-        metadata: { metricKind: saved.metricKind, period: saved.period, active: saved.active }
-      }
-    });
-
     return saved;
   });
 
@@ -81,16 +71,6 @@ export async function toggleGoalObjective(goalId: string) {
 
   const updated = await prisma.goalObjective.update({ where: { id: goalId }, data: { active: !goal.active } });
 
-  await prisma.auditLog.create({
-    data: {
-      action: AuditAction.STATUS_CHANGE,
-      entity: "GoalObjective",
-      entityId: goalId,
-      actorId: session.user.id,
-      metadata: { active: updated.active }
-    }
-  });
-
   revalidateTag("objectives-dashboard");
   revalidatePath("/objectives");
   return { ok: true, message: updated.active ? "Objetivo activado" : "Objetivo desactivado" };
@@ -102,26 +82,18 @@ export async function updateGoalHistorySettings(input: unknown) {
 
   const parsed = goalHistorySettingsSchema.safeParse(input);
   if (!parsed.success) {
-    return { ok: false, message: "Configuracion invalida" };
+    return { ok: false, message: "Configuración inválida" };
   }
 
-  await prisma.$transaction([
-    ...parsed.data.settings.map((setting) =>
+  await prisma.$transaction(
+    parsed.data.settings.map((setting) =>
       prisma.goalHistorySetting.upsert({
         where: { frequency: setting.frequency as GoalHistoryFrequency },
         update: { enabled: setting.enabled },
         create: { frequency: setting.frequency as GoalHistoryFrequency, enabled: setting.enabled }
       })
-    ),
-    prisma.auditLog.create({
-      data: {
-        action: AuditAction.CONFIG_CHANGE,
-        entity: "GoalHistorySetting",
-        actorId: session.user.id,
-        metadata: { settings: parsed.data.settings }
-      }
-    })
-  ]);
+    )
+  );
 
   revalidateTag("objectives-dashboard");
   revalidatePath("/objectives");
@@ -134,7 +106,7 @@ export async function previewGoalHistoryDelete(input: unknown) {
 
   const parsed = goalHistoryDeletePreviewSchema.safeParse(input);
   if (!parsed.success) {
-    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Rango invalido" };
+    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Rango inválido" };
   }
 
   const range = buildGoalHistoryDeleteRange(parsed.data);
@@ -148,20 +120,20 @@ export async function deleteGoalHistory(input: unknown) {
 
   const parsed = goalHistoryDeleteSchema.safeParse(input);
   if (!parsed.success) {
-    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos invalidos" };
+    return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Datos inválidos" };
   }
 
   if (parsed.data.confirmation !== "BORRAR") {
-    return { ok: false, message: "Escribi BORRAR para confirmar" };
+    return { ok: false, message: "Escribí BORRAR para confirmar" };
   }
 
   const configuredPin = process.env.GOAL_HISTORY_DELETE_PIN || process.env.REPORT_DELETE_PIN;
   if (!configuredPin) {
-    return { ok: false, message: "GOAL_HISTORY_DELETE_PIN o REPORT_DELETE_PIN no esta configurado en el servidor" };
+    return { ok: false, message: "GOAL_HISTORY_DELETE_PIN o REPORT_DELETE_PIN no está configurado en el servidor" };
   }
 
   if (parsed.data.pin !== configuredPin) {
-    return { ok: false, message: "PIN invalido" };
+    return { ok: false, message: "PIN inválido" };
   }
 
   const range = buildGoalHistoryDeleteRange(parsed.data);
@@ -173,22 +145,7 @@ export async function deleteGoalHistory(input: unknown) {
 
   await prisma.$transaction([
     prisma.goalComplianceHistory.deleteMany({ where: range.historyWhere }),
-    prisma.goalCheckpoint.deleteMany({ where: range.checkpointWhere }),
-    prisma.auditLog.create({
-      data: {
-        action: AuditAction.DELETE,
-        entity: "GoalComplianceHistory",
-        actorId: session.user.id,
-        metadata: {
-          mode: parsed.data.mode,
-          period: parsed.data.period ?? null,
-          from: range.from ?? null,
-          to: range.to ?? null,
-          affectedCount: summary.count,
-          affectedCheckpoints: summary.checkpoints
-        }
-      }
-    })
+    prisma.goalCheckpoint.deleteMany({ where: range.checkpointWhere })
   ]);
 
   revalidateTag("objectives-dashboard");

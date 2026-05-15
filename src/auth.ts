@@ -1,7 +1,7 @@
 import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
 import { PrismaAdapter } from "@auth/prisma-adapter";
-import { AuditAction, Role, ThemeVariant, UserStatus } from "@prisma/client";
+import { Role, ThemeVariant, UserStatus } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 
@@ -83,13 +83,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       const allowed = bootstrapSuperadmin || allowedEmail || existingUser?.status === UserStatus.ACTIVE;
 
       if (!allowed) {
-        await prisma.auditLog.create({
-          data: {
-            action: AuditAction.DENIED_LOGIN,
-            entity: "User",
-            metadata: { email }
-          }
-        });
         return `/access-denied?email=${encodeURIComponent(email)}`;
       }
 
@@ -189,24 +182,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       }
 
       return session;
-    }
-  },
-  events: {
-    async signIn({ user }) {
-      if (!hasDatabase) {
-        return;
-      }
-
-      const email = normalizeEmail(user.email);
-
-      await prisma.auditLog.create({
-        data: {
-          action: AuditAction.LOGIN,
-          entity: "User",
-          entityId: user.id,
-          metadata: { email }
-        }
-      });
     }
   }
 });

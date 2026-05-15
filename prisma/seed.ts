@@ -32,7 +32,7 @@ async function main() {
     { name: "Evolutivo", description: "Mejoras continuas y nuevas funcionalidades.", monthlyReset: false },
     { name: "Correctivo", description: "Correcciones y mantenimiento puntual.", monthlyReset: false },
     { name: "Consultoria", description: "Acompanamiento tecnico o funcional.", monthlyReset: false },
-    { name: "Basis", description: "Administracion tecnica recurrente.", monthlyReset: false },
+    { name: "Basis", description: "Administración tecnica recurrente.", monthlyReset: false },
     { name: "Desarrollo", description: "Construccion de software a medida.", monthlyReset: false },
     { name: "Interno", description: "Trabajo interno no facturable.", monthlyReset: false }
   ];
@@ -138,7 +138,7 @@ async function main() {
   });
   const goalData = {
     name: "Mantener 60% del total esperado",
-    description: "Todos los dias laborales deben tener al menos 50% registrado.",
+    description: "Todos los días laborales deben tener al menos 50% registrado.",
     metricKind: "MIN_EXPECTED_PERCENT" as const,
     period: "WEEKLY" as const,
     targetPercent: 60,

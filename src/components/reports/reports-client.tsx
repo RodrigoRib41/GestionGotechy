@@ -1,13 +1,14 @@
 "use client";
 
 import { ColumnDef } from "@tanstack/react-table";
-import { AlertTriangle, CheckCircle2, Download, FileSpreadsheet, FileText, Loader2, Trash2, Upload, X } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { useMemo, useState, useTransition } from "react";
+import { AlertTriangle, CheckCircle2, Download, FileSpreadsheet, FileText, Loader2, MessageSquare, Trash2, Upload, X } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 
 import { logReportExport } from "@/lib/actions/resource-actions";
 import { deleteTimeHistory, importTimeEntries, previewTimeHistoryDelete, previewTimeImport } from "@/lib/actions/report-actions";
+import { createTimeEntryThreadComment, markTimeEntryThreadRead, resolveTimeEntryThread } from "@/lib/actions/time-comment-actions";
 import { categoryKindMeta, categoryKindValues, getCategoryKindMeta, type CategoryKindKey } from "@/lib/category-kind";
 import { cn, formatMinutes } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +18,7 @@ import { DataTable } from "@/components/data/data-table";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 
 type ReportRow = {
   id: string;
@@ -35,6 +37,25 @@ type ReportRow = {
   overtimeMinutes: number;
   createdAt: string;
   updatedAt: string;
+  commentThread?: TimeCommentThread | null;
+};
+
+type TimeCommentThread = {
+  id: string;
+  status: string;
+  createdById: string;
+  createdBy: string;
+  resolvedAt: string | null;
+  createdAt: string;
+  unread: boolean;
+  comments: Array<{
+    id: string;
+    message: string;
+    authorId: string;
+    author: string;
+    createdAt: string;
+    mine: boolean;
+  }>;
 };
 
 type DeleteSummary = {
@@ -85,8 +106,18 @@ type ImportPreview = {
   }>;
 };
 
-export function ReportsClient({ rows, canDeleteHistory = false }: { rows: ReportRow[]; canDeleteHistory?: boolean }) {
+export function ReportsClient({
+  rows,
+  canDeleteHistory = false,
+  currentUserId
+}: {
+  rows: ReportRow[];
+  canDeleteHistory?: boolean;
+  currentUserId: string;
+}) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const [localRows, setLocalRows] = useState(rows);
   const [isPending, startTransition] = useTransition();
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -104,9 +135,21 @@ export function ReportsClient({ rows, canDeleteHistory = false }: { rows: Report
   const [deletePin, setDeletePin] = useState("");
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [deleteSummary, setDeleteSummary] = useState<DeleteSummary | null>(null);
+  const [commentRow, setCommentRow] = useState<ReportRow | null>(null);
+
+  useEffect(() => {
+    setLocalRows(rows);
+  }, [rows]);
+
+  useEffect(() => {
+    const entryId = searchParams.get("entry");
+    if (!entryId) return;
+    const row = localRows.find((item) => item.id === entryId);
+    if (row) setCommentRow(row);
+  }, [localRows, searchParams]);
 
   const filtered = useMemo(() => {
-    return rows.filter((row) => {
+    return localRows.filter((row) => {
       const date = row.date.slice(0, 10);
       return (
         (!from || date >= from) &&
@@ -119,12 +162,12 @@ export function ReportsClient({ rows, canDeleteHistory = false }: { rows: Report
         (!onlyOvertime || row.overtimeMinutes > 0)
       );
     });
-  }, [category, categoryKind, client, collaborator, from, onlyOvertime, project, rows, to]);
+  }, [category, categoryKind, client, collaborator, from, localRows, onlyOvertime, project, to]);
 
-  const clients = Array.from(new Set(rows.map((row) => row.client))).sort();
-  const projects = Array.from(new Set(rows.map((row) => row.project))).sort();
-  const collaborators = Array.from(new Set(rows.map((row) => row.collaborator))).sort();
-  const categories = Array.from(new Set(rows.map((row) => row.category))).sort();
+  const clients = Array.from(new Set(localRows.map((row) => row.client))).sort();
+  const projects = Array.from(new Set(localRows.map((row) => row.project))).sort();
+  const collaborators = Array.from(new Set(localRows.map((row) => row.collaborator))).sort();
+  const categories = Array.from(new Set(localRows.map((row) => row.category))).sort();
   const totalMinutes = filtered.reduce((total, row) => total + row.minutes, 0);
   const totalOvertime = filtered.reduce((total, row) => total + row.overtimeMinutes, 0);
   const typeStats = useMemo(() => buildCategoryTypeStats(filtered), [filtered]);
@@ -134,13 +177,29 @@ export function ReportsClient({ rows, canDeleteHistory = false }: { rows: Report
     { accessorKey: "date", header: "Fecha", cell: ({ row }) => new Date(row.original.date).toLocaleDateString("es-AR") },
     { accessorKey: "client", header: "Cliente" },
     { accessorKey: "project", header: "Proyecto" },
-    { accessorKey: "category", header: "Categoria" },
+    { accessorKey: "category", header: "Categoría" },
     { accessorKey: "categoryKind", header: "Tipo", cell: ({ row }) => <CategoryTypeBadge kind={row.original.categoryKind} /> },
     { accessorKey: "detail", header: "Detalle" },
     { accessorKey: "minutes", header: "Minutos", cell: ({ row }) => row.original.minutes },
     { accessorKey: "overtimeMinutes", header: "Fuera horario", cell: ({ row }) => row.original.overtimeMinutes },
-    { accessorKey: "createdAt", header: "Creacion", cell: ({ row }) => new Date(row.original.createdAt).toLocaleString("es-AR") },
-    { accessorKey: "updatedAt", header: "Modificacion", cell: ({ row }) => new Date(row.original.updatedAt).toLocaleString("es-AR") }
+    { accessorKey: "createdAt", header: "Creación", cell: ({ row }) => new Date(row.original.createdAt).toLocaleString("es-AR") },
+    { accessorKey: "updatedAt", header: "Modificación", cell: ({ row }) => new Date(row.original.updatedAt).toLocaleString("es-AR") },
+    {
+      id: "comments",
+      enableSorting: false,
+      header: "",
+      cell: ({ row }) => {
+        const thread = row.original.commentThread;
+        const disabled = !thread && !isWithinLastDays(row.original.date, 30);
+
+        return (
+          <Button disabled={disabled} size="sm" variant={thread?.status === "OPEN" ? "outline" : "ghost"} onClick={() => setCommentRow(row.original)}>
+            <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
+            {thread?.status === "OPEN" ? "Ver hilo" : "Comentar"}
+          </Button>
+        );
+      }
+    }
   ];
 
   const exportableRows = filtered.map((row) => ({
@@ -148,14 +207,14 @@ export function ReportsClient({ rows, canDeleteHistory = false }: { rows: Report
     Colaborador: row.collaborator,
     Cliente: row.client,
     Proyecto: row.project,
-    Categoria: row.category,
-    "Tipo categoria": getCategoryKindMeta(row.categoryKind).label,
+    Categoría: row.category,
+    "Tipo categoría": getCategoryKindMeta(row.categoryKind).label,
     Detalle: row.detail,
     Observaciones: row.observations ?? "",
     Minutos: row.minutes,
     "Minutos extra": row.overtimeMinutes,
-    Creacion: new Date(row.createdAt).toLocaleString("es-AR"),
-    Modificacion: new Date(row.updatedAt).toLocaleString("es-AR")
+    Creación: new Date(row.createdAt).toLocaleString("es-AR"),
+    Modificación: new Date(row.updatedAt).toLocaleString("es-AR")
   }));
 
   async function exportCsv() {
@@ -188,7 +247,7 @@ export function ReportsClient({ rows, canDeleteHistory = false }: { rows: Report
       worksheet.getCell("A1").font = { bold: true, size: 14, color: { argb: "FFFFFFFF" } };
       worksheet.getCell("A1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF111827" } };
       worksheet.addRow([]);
-      worksheet.addRow(["Colaborador", "Fecha", "Proyecto", "Categoria", "Tipo", "Detalle", "Minutos", "Minutos fuera de horario"]);
+      worksheet.addRow(["Colaborador", "Fecha", "Proyecto", "Categoría", "Tipo", "Detalle", "Minutos", "Minutos fuera de horario"]);
       const header = worksheet.getRow(3);
       header.font = { bold: true, color: { argb: "FFFFFFFF" } };
       header.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F766E" } };
@@ -236,7 +295,7 @@ export function ReportsClient({ rows, canDeleteHistory = false }: { rows: Report
     doc.text("Gotechy Consulting - Reporte maestro de tiempo", 14, 14);
     autoTable(doc, {
       startY: 20,
-      head: [["Colaborador", "Fecha", "Cliente", "Proyecto", "Categoria", "Tipo", "Min", "Extra"]],
+      head: [["Colaborador", "Fecha", "Cliente", "Proyecto", "Categoría", "Tipo", "Min", "Extra"]],
       body: filtered.map((row) => [
         row.collaborator,
         new Date(row.date).toLocaleDateString("es-AR"),
@@ -327,7 +386,7 @@ export function ReportsClient({ rows, canDeleteHistory = false }: { rows: Report
         <CardHeader className="flex-row flex-wrap items-center justify-between gap-3">
           <div>
             <CardTitle>Reporte Maestro de Tiempo</CardTitle>
-            <p className="mt-1 text-sm text-muted-foreground">Todas las cargas con filtros avanzados y exportacion corporativa por colaborador.</p>
+            <p className="mt-1 text-sm text-muted-foreground">Todas las cargas con filtros avanzados y exportación corporativa por colaborador.</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button onClick={() => setImportOpen(true)} variant="default">
@@ -364,7 +423,7 @@ export function ReportsClient({ rows, canDeleteHistory = false }: { rows: Report
             </Filter>
             <Filter label="Colaborador">
               <Select value={collaborator} onChange={(event) => setCollaborator(event.target.value)}>
-                <option value="">Todos</option>
+                <option value="">Todos los colaboradores</option>
                 {collaborators.map((item) => (
                   <option key={item} value={item}>
                     {item}
@@ -374,7 +433,7 @@ export function ReportsClient({ rows, canDeleteHistory = false }: { rows: Report
             </Filter>
             <Filter label="Cliente">
               <Select value={client} onChange={(event) => setClient(event.target.value)}>
-                <option value="">Todos</option>
+                <option value="">Todos los clientes</option>
                 {clients.map((item) => (
                   <option key={item} value={item}>
                     {item}
@@ -384,7 +443,7 @@ export function ReportsClient({ rows, canDeleteHistory = false }: { rows: Report
             </Filter>
             <Filter label="Proyecto">
               <Select value={project} onChange={(event) => setProject(event.target.value)}>
-                <option value="">Todos</option>
+                <option value="">Todos los proyectos</option>
                 {projects.map((item) => (
                   <option key={item} value={item}>
                     {item}
@@ -392,9 +451,9 @@ export function ReportsClient({ rows, canDeleteHistory = false }: { rows: Report
                 ))}
               </Select>
             </Filter>
-            <Filter label="Categoria">
+            <Filter label="Categoría">
               <Select value={category} onChange={(event) => setCategory(event.target.value)}>
-                <option value="">Todas</option>
+                <option value="">Todas las categorías</option>
                 {categories.map((item) => (
                   <option key={item} value={item}>
                     {item}
@@ -404,7 +463,7 @@ export function ReportsClient({ rows, canDeleteHistory = false }: { rows: Report
             </Filter>
             <Filter label="Tipo">
               <Select value={categoryKind} onChange={(event) => setCategoryKind(event.target.value as "" | CategoryKindKey)}>
-                <option value="">Todos</option>
+                <option value="">Todos los tipos de hora</option>
                 {categoryKindValues.map((kind) => (
                   <option key={kind} value={kind}>
                     {categoryKindMeta[kind].label}
@@ -453,7 +512,7 @@ export function ReportsClient({ rows, canDeleteHistory = false }: { rows: Report
                   <h2 className="text-lg font-semibold">Borrar historial de horas</h2>
                 </div>
                 <p className="mt-2 text-sm text-muted-foreground">
-                  Esta accion elimina registros de carga horaria y queda auditada. No afecta usuarios, clientes ni proyectos.
+                  Esta acción elimina registros de carga horaria. No afecta usuarios, clientes ni proyectos.
                 </p>
               </div>
               <Button disabled={isPending} size="sm" variant="ghost" onClick={() => setDeleteOpen(false)}>
@@ -524,7 +583,135 @@ export function ReportsClient({ rows, canDeleteHistory = false }: { rows: Report
           </div>
         </div>
       ) : null}
+      {commentRow ? (
+        <ReportCommentModal
+          currentUserId={currentUserId}
+          isPending={isPending}
+          row={commentRow}
+          onClose={() => setCommentRow(null)}
+          onResolved={(thread) => {
+            setLocalRows((current) => current.map((row) => (row.id === commentRow.id ? { ...row, commentThread: thread } : row)));
+            setCommentRow((current) => (current ? { ...current, commentThread: thread } : current));
+          }}
+          onSaved={(thread) => {
+            setLocalRows((current) => current.map((row) => (row.id === commentRow.id ? { ...row, commentThread: thread } : row)));
+            setCommentRow((current) => (current ? { ...current, commentThread: thread } : current));
+          }}
+        />
+      ) : null}
       {importOpen ? <ImportRecordsModal onClose={() => setImportOpen(false)} onImported={() => router.refresh()} /> : null}
+    </div>
+  );
+}
+
+function ReportCommentModal({
+  currentUserId,
+  isPending,
+  row,
+  onClose,
+  onResolved,
+  onSaved
+}: {
+  currentUserId: string;
+  isPending: boolean;
+  row: ReportRow;
+  onClose: () => void;
+  onResolved: (thread: TimeCommentThread) => void;
+  onSaved: (thread: TimeCommentThread) => void;
+}) {
+  const [message, setMessage] = useState("");
+  const [isSubmitting, startSubmitTransition] = useTransition();
+  const thread = row.commentThread;
+  const canResolve = thread?.status === "OPEN" && thread.createdById === currentUserId;
+  const busy = isPending || isSubmitting;
+
+  useEffect(() => {
+    if (!thread?.id) return;
+    void markTimeEntryThreadRead({ threadId: thread.id });
+  }, [thread?.id]);
+
+  function submit() {
+    startSubmitTransition(async () => {
+      const result = await createTimeEntryThreadComment({ timeEntryId: row.id, message });
+      if (!result.ok) {
+        toast.error(result.message);
+        return;
+      }
+      onSaved(result.thread as TimeCommentThread);
+      setMessage("");
+      toast.success(result.message);
+    });
+  }
+
+  function resolveThread() {
+    if (!thread) return;
+    startSubmitTransition(async () => {
+      const result = await resolveTimeEntryThread({ threadId: thread.id });
+      if (!result.ok) {
+        toast.error(result.message);
+        return;
+      }
+      onResolved(result.thread as TimeCommentThread);
+      toast.success(result.message);
+    });
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border bg-card shadow-xl">
+        <header className="flex items-start justify-between gap-4 border-b p-5">
+          <div>
+            <div className="flex items-center gap-2">
+              <MessageSquare className="h-5 w-5 text-teal-600" />
+              <h2 className="text-lg font-semibold">Comentarios del registro</h2>
+              {thread?.status === "RESOLVED" ? <Badge variant="success">Resuelto</Badge> : thread ? <Badge variant="warning">Abierto</Badge> : null}
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {row.collaborator} · {new Date(row.date).toLocaleDateString("es-AR")} · {row.project}
+            </p>
+          </div>
+          <Button disabled={busy} size="sm" variant="ghost" onClick={onClose}>
+            Cerrar
+          </Button>
+        </header>
+
+        <div className="flex-1 space-y-3 overflow-y-auto p-5">
+          {thread?.comments.length ? (
+            thread.comments.map((comment) => (
+              <div key={comment.id} className={cn("flex", comment.mine ? "justify-end" : "justify-start")}>
+                <div className={cn("max-w-[85%] rounded-lg border px-3 py-2 text-sm", comment.mine ? "bg-primary text-primary-foreground" : "bg-background")}>
+                  <div className="text-xs font-medium opacity-80">{comment.author}</div>
+                  <div className="mt-1 whitespace-pre-wrap">{comment.message}</div>
+                  <div className="mt-1 text-[11px] opacity-70">{new Date(comment.createdAt).toLocaleString("es-AR")}</div>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground">Todavia no hay comentarios en este registro.</div>
+          )}
+        </div>
+
+        <footer className="space-y-3 border-t p-4">
+          {thread?.status === "RESOLVED" ? (
+            <div className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">El hilo está resuelto y no admite nuevos comentarios.</div>
+          ) : (
+            <div className="space-y-2">
+              <Textarea value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Escribe un comentario para el colaborador" />
+              <div className="flex flex-wrap justify-between gap-2">
+                {canResolve ? (
+                  <Button disabled={busy} variant="outline" onClick={resolveThread}>
+                    Marcar resuelto
+                  </Button>
+                ) : <span />}
+                <Button disabled={busy || !message.trim()} onClick={submit}>
+                  <MessageSquare className="mr-2 h-4 w-4" />
+                  Enviar comentario
+                </Button>
+              </div>
+            </div>
+          )}
+        </footer>
+      </div>
     </div>
   );
 }
@@ -618,7 +805,7 @@ function ImportRecordsModal({ onClose, onImported }: { onClose: () => void; onIm
               <h2 className="text-lg font-semibold">Importar registros</h2>
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
-              Acepta XLSX o CSV con Colaborador, Fecha, Proyecto, Detalle, Minutos y Minutos fuera de horario. Cliente y Categoria son opcionales.
+              Acepta XLSX o CSV con Colaborador, Fecha, Proyecto, Detalle, Minutos y Minutos fuera de horario. Cliente y Categoría son opcionales.
             </p>
           </div>
           <Button disabled={busy} size="icon" variant="ghost" onClick={onClose}>
@@ -640,7 +827,7 @@ function ImportRecordsModal({ onClose, onImported }: { onClose: () => void; onIm
             }}
           >
             <FileSpreadsheet className="h-8 w-8 text-muted-foreground" />
-            <span className="mt-3 text-sm font-medium">{fileName || "Arrastra un archivo o hace click para seleccionarlo"}</span>
+            <span className="mt-3 text-sm font-medium">{fileName || "Arrastra un archivo o hacé clic para seleccionarlo"}</span>
             <span className="mt-1 text-xs text-muted-foreground">Maximo 10000 filas por lote. Los registros duplicados se omiten.</span>
             <input
               className="sr-only"
@@ -816,7 +1003,7 @@ async function parseImportFile(file: File): Promise<ImportRow[]> {
 
 function rowsFromMatrix(matrix: string[][]): ImportRow[] {
   const [headerRow, ...bodyRows] = matrix.filter((row) => row.some((cell) => cell.trim()));
-  if (!headerRow) throw new Error("El archivo esta vacio");
+  if (!headerRow) throw new Error("El archivo está vacío");
   const headers = headerRow.map(normalizeHeader);
   const index = {
     collaborator: findHeader(headers, ["colaborador", "usuario", "email"]),
@@ -1003,4 +1190,12 @@ function downloadBlob(blob: Blob, filename: string) {
 
 function cleanSheetName(name: string) {
   return name.replace(/[\\/*?:[\]]/g, " ").slice(0, 31) || "Colaborador";
+}
+
+function isWithinLastDays(dateValue: string, days: number) {
+  const date = new Date(dateValue);
+  const min = new Date();
+  min.setDate(min.getDate() - days);
+  min.setHours(0, 0, 0, 0);
+  return date >= min;
 }

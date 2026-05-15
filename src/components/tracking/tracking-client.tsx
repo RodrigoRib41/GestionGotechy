@@ -27,6 +27,8 @@ import { toast } from "sonner";
 import {
   addTrackingComment,
   archiveTrackingTask,
+  bulkDeleteTrackingTasks,
+  bulkUpdateTrackingTasks,
   changeTrackingTaskStatus,
   createTrackingTask,
   deleteTrackingTask,
@@ -107,6 +109,8 @@ export function TrackingClient({ data }: { data: TrackingData }) {
   const [history, setHistory] = useState<TrackingHistory[]>(data.history as TrackingHistory[]);
   const [view, setView] = useState<ViewMode>("kanban");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(() => new Set());
+  const [bulkDraft, setBulkDraft] = useState({ statusId: "", assigneeId: "", priority: "", dueDate: "" });
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(80);
   const [filters, setFilters] = useState({
@@ -180,6 +184,13 @@ export function TrackingClient({ data }: { data: TrackingData }) {
     setVisibleCount(80);
   }, [filters, deferredQuery, view]);
 
+  useEffect(() => {
+    setSelectedTaskIds((current) => {
+      const visibleIds = new Set(filteredTasks.map((task) => task.id));
+      return new Set(Array.from(current).filter((taskId) => visibleIds.has(taskId)));
+    });
+  }, [filteredTasks]);
+
   function updateFilter(key: keyof typeof filters, value: string) {
     setFilters((current) => {
       const next = { ...current, [key]: value };
@@ -229,6 +240,70 @@ export function TrackingClient({ data }: { data: TrackingData }) {
     });
   }
 
+  function toggleTaskSelection(taskId: string, checked: boolean) {
+    setSelectedTaskIds((current) => {
+      const next = new Set(current);
+      if (checked) next.add(taskId);
+      else next.delete(taskId);
+      return next;
+    });
+  }
+
+  function setVisibleSelection(checked: boolean) {
+    setSelectedTaskIds((current) => {
+      const next = new Set(current);
+      visibleTasks.forEach((task) => {
+        if (checked) next.add(task.id);
+        else next.delete(task.id);
+      });
+      return next;
+    });
+  }
+
+  function applyBulkUpdate() {
+    const taskIds = Array.from(selectedTaskIds);
+    if (!taskIds.length) return;
+
+    const payload = {
+      taskIds,
+      statusId: bulkDraft.statusId || undefined,
+      assigneeId: bulkDraft.assigneeId || undefined,
+      priority: bulkDraft.priority || undefined,
+      dueDate: bulkDraft.dueDate || undefined
+    };
+
+    startTransition(async () => {
+      const result = await bulkUpdateTrackingTasks(payload);
+      if (!result.ok) {
+        toast.error(result.message);
+        return;
+      }
+      toast.success(result.message);
+      setSelectedTaskIds(new Set());
+      setBulkDraft({ statusId: "", assigneeId: "", priority: "", dueDate: "" });
+      router.refresh();
+    });
+  }
+
+  function deleteSelectedTasks() {
+    const taskIds = Array.from(selectedTaskIds);
+    if (!taskIds.length) return;
+    if (!window.confirm(`¿Eliminar definitivamente ${taskIds.length} tareas seleccionadas junto con sus comentarios e historial?`)) return;
+
+    startTransition(async () => {
+      const result = await bulkDeleteTrackingTasks({ taskIds });
+      if (!result.ok) {
+        toast.error(result.message);
+        return;
+      }
+      setTasks((current) => current.filter((task) => !taskIds.includes(task.id)));
+      setHistory((current) => current.filter((item) => !taskIds.includes(item.taskId)));
+      setSelectedTaskIds(new Set());
+      toast.success(result.message);
+      router.refresh();
+    });
+  }
+
   async function exportCsv() {
     const rows = exportRows(filteredTasks, filteredHistory);
     const csv = [Object.keys(rows[0] ?? { Tarea: "" }).join(","), ...rows.map((row) => Object.values(row).map((value) => JSON.stringify(value ?? "")).join(","))].join("\n");
@@ -247,7 +322,7 @@ export function TrackingClient({ data }: { data: TrackingData }) {
     tasksSheet.addRows(rows);
     historySheet.columns = [
       { header: "Tarea", key: "task", width: 28 },
-      { header: "Accion", key: "action", width: 18 },
+      { header: "Acción", key: "action", width: 18 },
       { header: "Actor", key: "actor", width: 24 },
       { header: "Mensaje", key: "message", width: 42 },
       { header: "Minutos", key: "minutes", width: 12 },
@@ -318,6 +393,21 @@ export function TrackingClient({ data }: { data: TrackingData }) {
         <TaskCreator clients={data.clients} projects={data.projects} statuses={activeStatuses} users={data.users} onCreated={() => router.refresh()} />
       ) : null}
 
+      {data.permissions.canManage ? (
+        <BulkTaskActions
+          assignees={data.users}
+          draft={bulkDraft}
+          isPending={isPending}
+          selectedCount={selectedTaskIds.size}
+          statuses={activeStatuses}
+          onApply={applyBulkUpdate}
+          onDelete={deleteSelectedTasks}
+          onDraftChange={(key, value) => setBulkDraft((current) => ({ ...current, [key]: value }))}
+          onSelectVisible={() => setVisibleSelection(true)}
+          onClear={() => setSelectedTaskIds(new Set())}
+        />
+      ) : null}
+
       <div className="flex gap-2 overflow-x-auto">
         {[
           { id: "kanban", label: "Kanban", icon: KanbanSquare },
@@ -359,7 +449,15 @@ export function TrackingClient({ data }: { data: TrackingData }) {
       ) : null}
 
       {view === "list" ? (
-        <ListView onMove={moveTask} onSelect={setSelectedTaskId} statuses={activeStatuses} tasks={visibleTasks} />
+        <ListView
+          onMove={moveTask}
+          onSelect={setSelectedTaskId}
+          onSelectAllVisible={setVisibleSelection}
+          onToggleSelection={toggleTaskSelection}
+          selectedTaskIds={selectedTaskIds}
+          statuses={activeStatuses}
+          tasks={visibleTasks}
+        />
       ) : null}
 
       {view === "timeline" ? <TimelineView history={filteredHistory} tasks={filteredTasks} /> : null}
@@ -371,7 +469,7 @@ export function TrackingClient({ data }: { data: TrackingData }) {
       {view === "list" && visibleCount < filteredTasks.length ? (
         <div className="text-center">
           <Button variant="outline" onClick={() => setVisibleCount((current) => current + 80)}>
-            Ver mas
+            Ver más
           </Button>
         </div>
       ) : null}
@@ -435,7 +533,7 @@ function TrackingHeader({
       <div>
         <h2 className="text-sm font-semibold">Seguimiento operativo</h2>
         <p className="text-xs text-muted-foreground">
-          {canManage ? "Creacion, asignacion, estados e historial completo." : "Tus tareas, avances y comentarios internos."}
+          {canManage ? "Creación, asignación, estados e historial completo." : "Tus tareas, avances y comentarios internos."}
         </p>
       </div>
       <div className="flex flex-wrap gap-2">
@@ -529,9 +627,88 @@ function TrackingFilters({
         <option value="ACTIVE">Activas</option>
         <option value="ARCHIVED">Archivadas</option>
         <option value="DELETED">Eliminadas</option>
-        <option value="ALL">Todas</option>
+        <option value="ALL">Todas las tareas</option>
       </Select>
       <Input className="h-9" type="date" value={filters.date} onChange={(event) => onChange("date", event.target.value)} />
+    </section>
+  );
+}
+
+function BulkTaskActions({
+  assignees,
+  draft,
+  isPending,
+  selectedCount,
+  statuses,
+  onApply,
+  onClear,
+  onDelete,
+  onDraftChange,
+  onSelectVisible
+}: {
+  assignees: TrackingData["users"];
+  draft: { statusId: string; assigneeId: string; priority: string; dueDate: string };
+  isPending: boolean;
+  selectedCount: number;
+  statuses: TrackingStatus[];
+  onApply: () => void;
+  onClear: () => void;
+  onDelete: () => void;
+  onDraftChange: (key: "statusId" | "assigneeId" | "priority" | "dueDate", value: string) => void;
+  onSelectVisible: () => void;
+}) {
+  const hasChange = Boolean(draft.statusId || draft.assigneeId || draft.priority || draft.dueDate);
+
+  return (
+    <section className="rounded-lg border bg-card p-3 shadow-sm">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-semibold">Acciónes masivas</h3>
+          <p className="text-xs text-muted-foreground">{selectedCount} tareas seleccionadas</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button className="h-8" size="sm" type="button" variant="outline" onClick={onSelectVisible}>
+            Seleccionar visibles
+          </Button>
+          <Button className="h-8" disabled={!selectedCount} size="sm" type="button" variant="ghost" onClick={onClear}>
+            Limpiar
+          </Button>
+        </div>
+      </div>
+      <div className="grid gap-2 md:grid-cols-[180px_180px_150px_150px_auto_auto]">
+        <Select className="h-9" value={draft.statusId} onChange={(event) => onDraftChange("statusId", event.target.value)}>
+          <option value="">Cambiar estado</option>
+          {statuses.map((status) => (
+            <option key={status.id} value={status.id}>
+              {status.name}
+            </option>
+          ))}
+        </Select>
+        <Select className="h-9" value={draft.assigneeId} onChange={(event) => onDraftChange("assigneeId", event.target.value)}>
+          <option value="">Cambiar responsable</option>
+          {assignees.map((user) => (
+            <option key={user.id} value={user.id}>
+              {user.name}
+            </option>
+          ))}
+        </Select>
+        <Select className="h-9" value={draft.priority} onChange={(event) => onDraftChange("priority", event.target.value)}>
+          <option value="">Prioridad</option>
+          {Object.entries(priorityLabels).map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </Select>
+        <Input className="h-9" type="date" value={draft.dueDate} onChange={(event) => onDraftChange("dueDate", event.target.value)} />
+        <Button className="h-9" disabled={isPending || !selectedCount || !hasChange} type="button" onClick={onApply}>
+          Aplicar
+        </Button>
+        <Button className="h-9" disabled={isPending || !selectedCount} type="button" variant="destructive" onClick={onDelete}>
+          <Trash2 className="mr-2 h-4 w-4" />
+          Eliminar
+        </Button>
+      </div>
     </section>
   );
 }
@@ -792,12 +969,18 @@ function ListView({
   tasks,
   statuses,
   onMove,
-  onSelect
+  onSelect,
+  onSelectAllVisible,
+  onToggleSelection,
+  selectedTaskIds
 }: {
   tasks: TrackingTask[];
   statuses: TrackingStatus[];
   onMove: (taskId: string, status: TrackingStatus) => void;
   onSelect: (taskId: string) => void;
+  onSelectAllVisible: (checked: boolean) => void;
+  onToggleSelection: (taskId: string, checked: boolean) => void;
+  selectedTaskIds: Set<string>;
 }) {
   return (
     <div className="overflow-hidden rounded-lg border bg-card">
@@ -805,6 +988,14 @@ function ListView({
         <table className="w-full min-w-[980px] text-sm">
           <thead className="bg-muted/60">
             <tr>
+              <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">
+                <input
+                  aria-label="Seleccionar tareas visibles"
+                  checked={tasks.length > 0 && tasks.every((task) => selectedTaskIds.has(task.id))}
+                  type="checkbox"
+                  onChange={(event) => onSelectAllVisible(event.target.checked)}
+                />
+              </th>
               {["Tarea", "Cliente / Proyecto", "Responsable", "Estado", "Prioridad", "Fechas", "Tiempo", ""].map((header) => (
                 <th key={header} className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">
                   {header}
@@ -815,6 +1006,14 @@ function ListView({
           <tbody>
             {tasks.map((task) => (
               <tr key={task.id} className="border-t hover:bg-muted/30" style={{ contentVisibility: "auto" }}>
+                <td className="px-3 py-2">
+                  <input
+                    aria-label={`Seleccionar ${task.title}`}
+                    checked={selectedTaskIds.has(task.id)}
+                    type="checkbox"
+                    onChange={(event) => onToggleSelection(task.id, event.target.checked)}
+                  />
+                </td>
                 <td className="max-w-[280px] px-3 py-2">
                   <button className="text-left font-medium hover:underline" type="button" onClick={() => onSelect(task.id)}>
                     {task.title}
@@ -1079,9 +1278,11 @@ function TaskDetailPanel({
     tags: task.tags.join(", ")
   });
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [historyOpen, setHistoryOpen] = useState(true);
   const autosaveSignatureRef = useRef(JSON.stringify(draft));
   const [isPending, startTransition] = useTransition();
   const availableProjects = projects.filter((project) => project.clientId === draft.clientId);
+  const conversationHistory = history.filter((item) => item.action === "COMMENT" || item.action === "TIME_LOGGED");
 
   useEffect(() => {
     if (!canManage || task.deletedAt) return;
@@ -1162,7 +1363,7 @@ function TaskDetailPanel({
   function changeLifecycle(action: "ARCHIVE" | "DELETE" | "RESTORE") {
     const question =
       action === "DELETE"
-        ? "Esta accion mueve la tarea a eliminadas y conserva auditoria. ¿Continuar?"
+        ? "Esta acción elimina la tarea definitivamente junto con sus comentarios e historial. ¿Continuar?"
         : action === "ARCHIVE"
           ? "¿Archivar esta tarea?"
           : "¿Restaurar esta tarea?";
@@ -1214,7 +1415,7 @@ function TaskDetailPanel({
           <Card>
             <CardHeader className="p-3 pb-0"><CardTitle className="text-sm">Comentario interno</CardTitle></CardHeader>
             <CardContent className="space-y-2 p-3">
-              <Textarea value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Registrar avance, bloqueo o decision" />
+              <Textarea value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Registrar avance, bloqueo o decisión" />
               <Button disabled={isPending || !comment.trim()} onClick={submitComment}>
                 <MessageSquare className="mr-2 h-4 w-4" />
                 Comentar
@@ -1291,19 +1492,30 @@ function TaskDetailPanel({
         ) : null}
 
         <Card className="mt-4">
-          <CardHeader className="p-3 pb-0"><CardTitle className="text-sm">Historial</CardTitle></CardHeader>
-          <CardContent className="space-y-2 p-3">
-            {history.map((item) => (
-              <div key={item.id} className="rounded-md border p-2 text-xs">
-                <div className="flex justify-between gap-2">
-                  <span className="font-medium">{item.action}</span>
-                  <span className="text-muted-foreground">{new Date(item.createdAt).toLocaleString("es-AR")}</span>
-                </div>
-                <div className="mt-1 text-muted-foreground">{item.actor}</div>
-                {item.message ? <div className="mt-2">{item.message}</div> : null}
-              </div>
-            ))}
-          </CardContent>
+          <CardHeader className="flex-row items-center justify-between p-3 pb-0">
+            <CardTitle className="text-sm">Conversacion historica</CardTitle>
+            <Button className="h-8" size="sm" variant="ghost" onClick={() => setHistoryOpen((value) => !value)}>
+              {historyOpen ? "Minimizar" : "Expandir"}
+            </Button>
+          </CardHeader>
+          {historyOpen ? (
+            <CardContent className="space-y-2 p-3">
+              {conversationHistory.length ? (
+                conversationHistory.map((item) => (
+                  <div key={item.id} className="rounded-md border p-2 text-xs">
+                    <div className="flex justify-between gap-2">
+                      <span className="font-medium">{item.actor}</span>
+                      <span className="text-muted-foreground">{new Date(item.createdAt).toLocaleString("es-AR")}</span>
+                    </div>
+                    {item.message ? <div className="mt-2 whitespace-pre-wrap">{item.message}</div> : null}
+                    {item.minutes ? <div className="mt-1 text-muted-foreground">{formatMinutes(item.minutes)}</div> : null}
+                  </div>
+                ))
+              ) : (
+                <div className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">Sin comentarios todavia.</div>
+              )}
+            </CardContent>
+          ) : null}
         </Card>
       </aside>
     </div>

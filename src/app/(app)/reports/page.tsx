@@ -11,7 +11,7 @@ export default async function ReportsPage() {
     redirect("/");
   }
 
-  const rows = await getReportsData();
+  const rows = await getReportsData(session?.user.id ?? "");
 
-  return <ReportsClient rows={rows} canDeleteHistory={canDeleteTimeHistory(session)} />;
+  return <ReportsClient rows={rows} canDeleteHistory={canDeleteTimeHistory(session)} currentUserId={session?.user.id ?? ""} />;
 }

@@ -77,18 +77,6 @@ enum TrackingHistoryAction {
   REOPEN
 }
 
-enum AuditAction {
-  CREATE
-  UPDATE
-  DELETE
-  LOGIN
-  DENIED_LOGIN
-  EXPORT
-  ROLE_CHANGE
-  STATUS_CHANGE
-  CONFIG_CHANGE
-}
-
 enum GoalPeriod {
   DAILY
   WEEKLY
@@ -115,39 +103,53 @@ enum GoalMetricKind {
   CATEGORY_MINUTES
 }
 
+enum TimeEntryThreadStatus {
+  OPEN
+  RESOLVED
+}
+
+enum NotificationType {
+  TIME_ENTRY_COMMENT
+}
+
 model User {
-  id            String          @id @default(cuid())
-  name          String?
-  email         String          @unique
-  emailVerified DateTime?
-  image         String?
-  role          Role            @default(COLABORADOR)
-  status        UserStatus      @default(PENDING)
-  themeVariant  ThemeVariant    @default(DEFAULT)
-  lastLoginAt   DateTime?
-  archivedAt    DateTime?
-  deletedAt     DateTime?
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
-  accounts      Account[]
-  sessions      Session[]
-  timeEntries   TimeEntry[]
-  projectLinks  ProjectMember[]
-  workSchedule  WorkSchedule?
-  favorites     TimeEntryFavorite[]
-  assignedTrackingTasks TrackingTask[] @relation("TrackingTaskAssignee")
-  createdTrackingTasks  TrackingTask[] @relation("TrackingTaskCreator")
-  trackingHistory       TrackingTaskHistory[]
-  trackingAttachments   TrackingTaskAttachment[]
-  timeImportBatches     TimeImportBatch[]
-  dashboardPreferences  UserDashboardPreference[]
-  ownedGoals            GoalObjective[] @relation("GoalOwner")
-  goalExclusions        GoalObjectiveExclusion[]
-  goalMetrics           GoalMetric[]
-  goalCompliances       GoalCompliance[]
-  goalHistory           GoalComplianceHistory[]
-  goalCheckpoints       GoalCheckpoint[]
-  auditLogs     AuditLog[]      @relation("AuditActor")
+  id                        String                    @id @default(cuid())
+  name                      String?
+  email                     String                    @unique
+  emailVerified             DateTime?
+  image                     String?
+  role                      Role                      @default(COLABORADOR)
+  status                    UserStatus                @default(PENDING)
+  themeVariant              ThemeVariant              @default(DEFAULT)
+  lastLoginAt               DateTime?
+  archivedAt                DateTime?
+  deletedAt                 DateTime?
+  createdAt                 DateTime                  @default(now())
+  updatedAt                 DateTime                  @updatedAt
+  accounts                  Account[]
+  sessions                  Session[]
+  timeEntries               TimeEntry[]
+  projectLinks              ProjectMember[]
+  workSchedule              WorkSchedule?
+  favorites                 TimeEntryFavorite[]
+  assignedTrackingTasks     TrackingTask[]            @relation("TrackingTaskAssignee")
+  createdTrackingTasks      TrackingTask[]            @relation("TrackingTaskCreator")
+  trackingHistory           TrackingTaskHistory[]
+  trackingAttachments       TrackingTaskAttachment[]
+  timeImportBatches         TimeImportBatch[]
+  dashboardPreferences      UserDashboardPreference[]
+  ownedGoals                GoalObjective[]           @relation("GoalOwner")
+  goalExclusions            GoalObjectiveExclusion[]
+  goalMetrics               GoalMetric[]
+  goalCompliances           GoalCompliance[]
+  goalHistory               GoalComplianceHistory[]
+  goalCheckpoints           GoalCheckpoint[]
+  visibleProjectPreferences UserProjectVisibility[]
+  createdTimeEntryThreads   TimeEntryThread[]         @relation("TimeEntryThreadCreator")
+  resolvedTimeEntryThreads  TimeEntryThread[]         @relation("TimeEntryThreadResolver")
+  timeEntryComments         TimeEntryComment[]        @relation("TimeEntryCommentAuthor")
+  notifications             Notification[]
+  timeEntryThreadReads      TimeEntryThreadRead[]
 
   @@index([role])
   @@index([status])
@@ -219,38 +221,39 @@ model AllowedEmail {
 }
 
 model Client {
-  id          String       @id @default(cuid())
-  name        String
-  status      ClientStatus @default(ACTIVE)
-  description String?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  projects    Project[]
-  timeEntries TimeEntry[]
+  id            String          @id @default(cuid())
+  name          String
+  status        ClientStatus    @default(ACTIVE)
+  description   String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  projects      Project[]
+  timeEntries   TimeEntry[]
   trackingTasks TrackingTask[]
-  goals       GoalObjective[]
+  goals         GoalObjective[]
 
   @@index([status])
 }
 
 model Project {
-  id               String          @id @default(cuid())
-  name             String
-  status           ProjectStatus   @default(ACTIVE)
-  usesEstimatedTime Boolean        @default(false)
-  estimatedMinutes Int             @default(0)
-  description      String?
-  clientId         String
-  projectTypeId    String?
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
-  client           Client          @relation(fields: [clientId], references: [id], onDelete: Restrict)
-  projectType      ProjectType?    @relation(fields: [projectTypeId], references: [id], onDelete: SetNull)
-  members          ProjectMember[]
-  timeEntries      TimeEntry[]
-  favorites        TimeEntryFavorite[]
-  trackingTasks    TrackingTask[]
-  goals            GoalObjective[]
+  id                    String                  @id @default(cuid())
+  name                  String
+  status                ProjectStatus           @default(ACTIVE)
+  usesEstimatedTime     Boolean                 @default(false)
+  estimatedMinutes      Int                     @default(0)
+  description           String?
+  clientId              String
+  projectTypeId         String?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  client                Client                  @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  projectType           ProjectType?            @relation(fields: [projectTypeId], references: [id], onDelete: SetNull)
+  members               ProjectMember[]
+  timeEntries           TimeEntry[]
+  favorites             TimeEntryFavorite[]
+  trackingTasks         TrackingTask[]
+  goals                 GoalObjective[]
+  visibilityPreferences UserProjectVisibility[]
 
   @@index([clientId])
   @@index([status])
@@ -284,14 +287,14 @@ model ProjectMember {
 }
 
 model Category {
-  id          String      @id @default(cuid())
-  name        String      @unique
-  color       String      @default("#2563EB")
-  kind        CategoryKind @default(PRODUCTIVE)
+  id          String              @id @default(cuid())
+  name        String              @unique
+  color       String              @default("#2563EB")
+  kind        CategoryKind        @default(PRODUCTIVE)
   description String?
-  active      Boolean     @default(true)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  active      Boolean             @default(true)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
   timeEntries TimeEntry[]
   favorites   TimeEntryFavorite[]
   goals       GoalObjective[]
@@ -300,23 +303,25 @@ model Category {
 }
 
 model TimeEntry {
-  id              String          @id @default(cuid())
+  id              String           @id @default(cuid())
   date            DateTime
   detail          String
   observations    String?
   minutes         Int
-  overtimeMinutes Int             @default(0)
-  status          TimeEntryStatus @default(SUBMITTED)
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  overtimeMinutes Int              @default(0)
+  status          TimeEntryStatus  @default(SUBMITTED)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
   userId          String
   projectId       String
   clientId        String
   categoryId      String
-  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  project         Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  client          Client          @relation(fields: [clientId], references: [id], onDelete: Restrict)
-  category        Category        @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project         Project          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  client          Client           @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  category        Category         @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  commentThread   TimeEntryThread?
+  notifications   Notification[]
 
   @@index([date])
   @@index([userId, date])
@@ -329,25 +334,103 @@ model TimeEntry {
 }
 
 model TimeEntryFavorite {
-  id             String       @id @default(cuid())
-  name           String
-  detail         String
-  observations   String?
-  minutes        Int          @default(30)
-  overtimeMinutes Int         @default(0)
-  userId         String
-  projectId      String
-  categoryId     String
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  project        Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  category       Category     @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  id              String   @id @default(cuid())
+  name            String
+  detail          String
+  observations    String?
+  minutes         Int      @default(30)
+  overtimeMinutes Int      @default(0)
+  userId          String
+  projectId       String
+  categoryId      String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  category        Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
 
+  @@unique([userId, projectId, categoryId, detail, minutes, overtimeMinutes])
   @@index([userId])
   @@index([projectId])
   @@index([categoryId])
-  @@unique([userId, projectId, categoryId, detail, minutes, overtimeMinutes])
+}
+
+model UserProjectVisibility {
+  id        String   @id @default(cuid())
+  userId    String
+  projectId String
+  visible   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, projectId])
+  @@index([projectId])
+  @@index([userId, visible])
+}
+
+model TimeEntryThread {
+  id            String                @id @default(cuid())
+  status        TimeEntryThreadStatus @default(OPEN)
+  timeEntryId   String                @unique
+  createdById   String
+  resolvedAt    DateTime?
+  resolvedById  String?
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+  timeEntry     TimeEntry             @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
+  createdBy     User                  @relation("TimeEntryThreadCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  resolvedBy    User?                 @relation("TimeEntryThreadResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+  comments      TimeEntryComment[]
+  notifications Notification[]
+  reads         TimeEntryThreadRead[]
+
+  @@index([status, createdAt])
+  @@index([createdById, status])
+}
+
+model TimeEntryComment {
+  id        String          @id @default(cuid())
+  message   String
+  createdAt DateTime        @default(now())
+  threadId  String
+  authorId  String
+  thread    TimeEntryThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  author    User            @relation("TimeEntryCommentAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([threadId, createdAt])
+  @@index([authorId, createdAt])
+}
+
+model TimeEntryThreadRead {
+  threadId   String
+  userId     String
+  lastReadAt DateTime        @default(now())
+  thread     TimeEntryThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([threadId, userId])
+  @@index([userId, lastReadAt])
+}
+
+model Notification {
+  id          String           @id @default(cuid())
+  type        NotificationType
+  title       String
+  body        String?
+  readAt      DateTime?
+  createdAt   DateTime         @default(now())
+  userId      String
+  threadId    String?
+  timeEntryId String?
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  thread      TimeEntryThread? @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  timeEntry   TimeEntry?       @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+  @@index([threadId])
+  @@index([timeEntryId])
 }
 
 model TimeImportBatch {
@@ -540,16 +623,16 @@ model GoalCheckpoint {
 }
 
 model TrackingTaskStatus {
-  id          String         @id @default(cuid())
-  name        String         @unique
-  color       String         @default("#64748B")
-  active      Boolean        @default(true)
-  sortOrder   Int            @default(0)
-  isFinal     Boolean        @default(false)
-  isBlocked   Boolean        @default(false)
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
-  tasks       TrackingTask[]
+  id        String         @id @default(cuid())
+  name      String         @unique
+  color     String         @default("#64748B")
+  active    Boolean        @default(true)
+  sortOrder Int            @default(0)
+  isFinal   Boolean        @default(false)
+  isBlocked Boolean        @default(false)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  tasks     TrackingTask[]
 
   @@index([active, sortOrder])
   @@index([isFinal])
@@ -557,32 +640,32 @@ model TrackingTaskStatus {
 }
 
 model TrackingTask {
-  id               String               @id @default(cuid())
+  id               String                   @id @default(cuid())
   title            String
   description      String
-  priority         TrackingTaskPriority @default(MEDIUM)
+  priority         TrackingTaskPriority     @default(MEDIUM)
   dueDate          DateTime?
-  estimatedMinutes Int                  @default(0)
-  consumedMinutes  Int                  @default(0)
-  tags             String[]             @default([])
+  estimatedMinutes Int                      @default(0)
+  consumedMinutes  Int                      @default(0)
+  tags             String[]                 @default([])
   attachmentMeta   Json?
   closedAt         DateTime?
   archivedAt       DateTime?
   archivedById     String?
   deletedAt        DateTime?
   deletedById      String?
-  createdAt        DateTime             @default(now())
-  updatedAt        DateTime             @updatedAt
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
   clientId         String
   projectId        String
   assigneeId       String
   createdById      String?
   statusId         String
-  client           Client               @relation(fields: [clientId], references: [id], onDelete: Restrict)
-  project          Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  assignee         User                 @relation("TrackingTaskAssignee", fields: [assigneeId], references: [id], onDelete: Restrict)
-  createdBy        User?                @relation("TrackingTaskCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  status           TrackingTaskStatus   @relation(fields: [statusId], references: [id], onDelete: Restrict)
+  client           Client                   @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  project          Project                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  assignee         User                     @relation("TrackingTaskAssignee", fields: [assigneeId], references: [id], onDelete: Restrict)
+  createdBy        User?                    @relation("TrackingTaskCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  status           TrackingTaskStatus       @relation(fields: [statusId], references: [id], onDelete: Restrict)
   history          TrackingTaskHistory[]
   attachments      TrackingTaskAttachment[]
 
@@ -633,22 +716,4 @@ model TrackingTaskAttachment {
   @@index([taskId])
   @@index([createdById])
   @@index([active])
-}
-
-model AuditLog {
-  id         String      @id @default(cuid())
-  action     AuditAction
-  entity     String
-  entityId   String?
-  metadata   Json?
-  ipAddress  String?
-  userAgent  String?
-  actorId    String?
-  createdAt  DateTime    @default(now())
-  actor      User?       @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
-
-  @@index([action])
-  @@index([entity])
-  @@index([actorId])
-  @@index([createdAt])
 }

@@ -2,6 +2,7 @@
 
 import { format, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
+import { useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
   BarChart3,
@@ -13,11 +14,14 @@ import {
   ChevronRight,
   Clock3,
   ClipboardList,
+  Eye,
   Maximize2,
+  MessageSquare,
   Play,
   RotateCcw,
   Save,
   Search,
+  SlidersHorizontal,
   Star,
   Square,
   Target,
@@ -36,12 +40,15 @@ import {
   saveTimeEntryFavorite,
   updateTimeEntryFavorite
 } from "@/lib/actions/time-entry-actions";
+import { updateVisibleProjects } from "@/lib/actions/resource-actions";
+import { markTimeEntryThreadRead, replyTimeEntryThread } from "@/lib/actions/time-comment-actions";
 import { categoryKindMeta, categoryKindValues, getCategoryKindMeta, type CategoryKindKey } from "@/lib/category-kind";
 import { cn, formatMinutes, toDateInputValue } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 
 type ProjectOption = {
   id: string;
@@ -71,6 +78,25 @@ type EntryRow = {
   observations?: string | null;
   minutes: number;
   overtimeMinutes: number;
+  commentThread?: TimeCommentThread | null;
+};
+
+type TimeCommentThread = {
+  id: string;
+  status: string;
+  createdById: string;
+  createdBy: string;
+  resolvedAt: string | null;
+  createdAt: string;
+  unread: boolean;
+  comments: Array<{
+    id: string;
+    message: string;
+    authorId: string;
+    author: string;
+    createdAt: string;
+    mine: boolean;
+  }>;
 };
 
 type FavoriteOption = {
@@ -128,6 +154,7 @@ export function QuickTimeEntry({
   userId,
   projects,
   categories,
+  visibleProjectIds: initialVisibleProjectIds,
   favorites: initialFavorites,
   personalMetrics,
   goalProgress,
@@ -137,6 +164,7 @@ export function QuickTimeEntry({
   userId: string;
   projects: ProjectOption[];
   categories: CategoryOption[];
+  visibleProjectIds: string[];
   favorites: FavoriteOption[];
   personalMetrics: {
     todayPercent: number;
@@ -163,20 +191,26 @@ export function QuickTimeEntry({
   workSchedule: { dailyMinutes: number; weeklyMinutes: number; workdays: number[]; modality: string };
   recentEntries: EntryRow[];
 }) {
+  const searchParams = useSearchParams();
   const [entries, setEntries] = useState(recentEntries);
   const [localProjects, setLocalProjects] = useState(projects);
+  const [visibleProjectIds, setVisibleProjectIds] = useState(() => new Set(initialVisibleProjectIds.length ? initialVisibleProjectIds : projects.map((project) => project.id)));
+  const [projectSelectorOpen, setProjectSelectorOpen] = useState(false);
+  const [activeCommentEntry, setActiveCommentEntry] = useState<EntryRow | null>(null);
   const [favorites, setFavorites] = useState(initialFavorites);
   const [selectedFavoriteId, setSelectedFavoriteId] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [categoryKindFilter, setCategoryKindFilter] = useState<"ALL" | CategoryKindKey>("ALL");
   const [isPending, startTransition] = useTransition();
   const projectById = useMemo(() => new Map(localProjects.map((project) => [project.id, project])), [localProjects]);
+  const visibleProjects = useMemo(() => localProjects.filter((project) => visibleProjectIds.has(project.id)), [localProjects, visibleProjectIds]);
+  const visibleFavorites = useMemo(() => favorites.filter((favorite) => visibleProjectIds.has(favorite.projectId)), [favorites, visibleProjectIds]);
   const categoryById = useMemo(() => new Map(categories.map((category) => [category.id, category])), [categories]);
   const visibleCategories = useMemo(
     () => categories.filter((category) => categoryKindFilter === "ALL" || category.kind === categoryKindFilter),
     [categories, categoryKindFilter]
   );
-  const defaultProjectId = favorites.at(0)?.projectId ?? localProjects.at(0)?.id ?? "";
+  const defaultProjectId = visibleFavorites.at(0)?.projectId ?? visibleProjects.at(0)?.id ?? "";
   const defaultCategoryId = favorites.at(0)?.categoryId ?? categories.at(0)?.id ?? "";
   const favoriteCacheKey = `gotechy:time-favorites:${userId}`;
   const stopwatchCacheKey = `gotechy:time-stopwatch:${userId}`;
@@ -217,8 +251,9 @@ export function QuickTimeEntry({
 
     return { consumedMinutes, remainingMinutes, percent, low: remainingMinutes < lowAvailabilityThreshold };
   }, [selectedProject]);
-  const groupedDays = useMemo(() => groupEntriesByDay(entries), [entries]);
-  const categoryKindStats = useMemo(() => buildCategoryKindStats(entries, categoryById), [categoryById, entries]);
+  const visibleEntries = useMemo(() => entries.filter((entry) => visibleProjectIds.has(entry.projectId)), [entries, visibleProjectIds]);
+  const groupedDays = useMemo(() => groupEntriesByDay(visibleEntries), [visibleEntries]);
+  const categoryKindStats = useMemo(() => buildCategoryKindStats(visibleEntries, categoryById), [categoryById, visibleEntries]);
   const [expandedDays, setExpandedDays] = useState<Set<string>>(() => new Set(groupEntriesByDay(recentEntries).slice(0, 3).map((group) => group.key)));
 
   useEffect(() => {
@@ -227,6 +262,21 @@ export function QuickTimeEntry({
       setForm((current) => ({ ...current, categoryId: visibleCategories[0].id }));
     }
   }, [form.categoryId, visibleCategories]);
+
+  useEffect(() => {
+    setVisibleProjectIds(new Set(initialVisibleProjectIds.length ? initialVisibleProjectIds : projects.map((project) => project.id)));
+  }, [initialVisibleProjectIds, projects]);
+
+  useEffect(() => {
+    if (!visibleProjects.length) {
+      setForm((current) => ({ ...current, projectId: "" }));
+      return;
+    }
+
+    if (!visibleProjectIds.has(form.projectId)) {
+      setForm((current) => ({ ...current, projectId: visibleProjects[0].id }));
+    }
+  }, [form.projectId, visibleProjectIds, visibleProjects]);
 
   useEffect(() => {
     try {
@@ -292,6 +342,13 @@ export function QuickTimeEntry({
     }
   }, [stopwatch, stopwatchCacheKey]);
 
+  useEffect(() => {
+    const entryId = searchParams.get("entry");
+    if (!entryId) return;
+    const entry = entries.find((item) => item.id === entryId);
+    if (entry?.commentThread) setActiveCommentEntry(entry);
+  }, [entries, searchParams]);
+
   const applyEntryPatch = useCallback(
     (entry: EntryRow, patch: EntryPatch): EntryRow => {
       const project = patch.projectId ? projectById.get(patch.projectId) : null;
@@ -331,6 +388,30 @@ export function QuickTimeEntry({
     setForm((current) => ({ ...current, [key]: value }));
   }
 
+  function persistVisibleProjects(next: Set<string>) {
+    setVisibleProjectIds(new Set(next));
+    startTransition(async () => {
+      const result = await updateVisibleProjects({ projectIds: Array.from(next) });
+      if (!result.ok) {
+        toast.error(result.message);
+        return;
+      }
+      toast.success(result.message);
+    });
+  }
+
+  function toggleVisibleProject(projectId: string) {
+    const next = new Set(visibleProjectIds);
+    if (next.has(projectId)) next.delete(projectId);
+    else next.add(projectId);
+    persistVisibleProjects(next);
+  }
+
+  function updateEntryThread(entryId: string, thread: TimeCommentThread) {
+    setEntries((current) => current.map((entry) => (entry.id === entryId ? { ...entry, commentThread: thread } : entry)));
+    setActiveCommentEntry((current) => (current?.id === entryId ? { ...current, commentThread: thread } : current));
+  }
+
   function applyFavorite(favorite: FavoriteOption) {
     setSelectedFavoriteId(favorite.id);
     setForm((current) => ({
@@ -347,7 +428,7 @@ export function QuickTimeEntry({
   function favoritePayload() {
     const project = projectById.get(form.projectId);
     const category = categoryById.get(form.categoryId);
-    const baseName = form.detail.trim() || `${project?.name ?? "Proyecto"} / ${category?.name ?? "Categoria"}`;
+    const baseName = form.detail.trim() || `${project?.name ?? "Proyecto"} / ${category?.name ?? "Categoría"}`;
 
     return {
       name: baseName.slice(0, 80),
@@ -363,7 +444,7 @@ export function QuickTimeEntry({
 
   function saveFavorite() {
     if (!canSubmit) {
-      toast.error("Completa proyecto, categoria, detalle y minutos");
+      toast.error("Completá proyecto, categoria, detalle y minutos");
       return;
     }
 
@@ -520,11 +601,27 @@ export function QuickTimeEntry({
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <div>
             <h2 className="text-sm font-semibold">Carga rapida</h2>
-            <p className="text-xs text-muted-foreground">El tipo de categoria queda visible para evitar imputaciones confusas.</p>
+            <p className="text-xs text-muted-foreground">El tipo de categoría queda visible para evitar imputaciones confusas.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {selectedCategory ? <CategoryKindBadge kind={selectedCategory.kind} /> : null}
             {selectedProject ? <Badge variant="outline">{selectedProject.client.name}</Badge> : null}
+            <div className="relative">
+              <Button className="h-8" size="sm" type="button" variant="outline" onClick={() => setProjectSelectorOpen((value) => !value)}>
+                <SlidersHorizontal className="mr-2 h-3.5 w-3.5" />
+                Proyectos visibles · {visibleProjectIds.size}
+              </Button>
+              {projectSelectorOpen ? (
+                <ProjectVisibilitySelector
+                  projects={localProjects}
+                  visibleProjectIds={visibleProjectIds}
+                  onClose={() => setProjectSelectorOpen(false)}
+                  onHideAll={() => persistVisibleProjects(new Set())}
+                  onShowAll={() => persistVisibleProjects(new Set(localProjects.map((project) => project.id)))}
+                  onToggle={toggleVisibleProject}
+                />
+              ) : null}
+            </div>
           </div>
         </div>
 
@@ -548,9 +645,9 @@ export function QuickTimeEntry({
             ) : null}
             <Badge variant="muted">{favorites.length}/5</Badge>
           </div>
-          {favorites.length ? (
+          {visibleFavorites.length ? (
             <div className="flex gap-2 overflow-x-auto pb-1">
-              {favorites.map((favorite) => (
+              {visibleFavorites.map((favorite) => (
                 <button
                   key={favorite.id}
                   className={cn(
@@ -595,22 +692,22 @@ export function QuickTimeEntry({
             <CompactField icon={Calendar}>
               <Input aria-label="Fecha" className="h-9" type="date" value={form.date} onChange={(event) => updateForm("date", event.target.value)} />
             </CompactField>
-            <Select aria-label="Proyecto" className="h-9" value={form.projectId} onChange={(event) => updateForm("projectId", event.target.value)}>
-              {localProjects.map((project) => (
+            <Select aria-label="Proyecto" className="h-9" disabled={!visibleProjects.length} value={form.projectId} onChange={(event) => updateForm("projectId", event.target.value)}>
+              {visibleProjects.map((project) => (
                 <option key={project.id} value={project.id}>
                   {project.name} - {project.client.name}
                 </option>
               ))}
             </Select>
-            <Select aria-label="Filtrar tipo de categoria" className="h-9" value={categoryKindFilter} onChange={(event) => setCategoryKindFilter(event.target.value as "ALL" | CategoryKindKey)}>
-              <option value="ALL">Todos los tipos</option>
+            <Select aria-label="Filtrar tipo de categoría" className="h-9" value={categoryKindFilter} onChange={(event) => setCategoryKindFilter(event.target.value as "ALL" | CategoryKindKey)}>
+              <option value="ALL">Todos los tipos de hora</option>
               {categoryKindValues.map((kind) => (
                 <option key={kind} value={kind}>
                   {categoryKindMeta[kind].label}
                 </option>
               ))}
             </Select>
-            <Select aria-label="Categoria" className="h-9" value={form.categoryId} onChange={(event) => updateForm("categoryId", event.target.value)}>
+            <Select aria-label="Categoría" className="h-9" value={form.categoryId} onChange={(event) => updateForm("categoryId", event.target.value)}>
               {visibleCategories.map((category) => (
                 <option key={category.id} value={category.id}>
                   {category.name} - {getCategoryKindMeta(category.kind).label}
@@ -641,6 +738,7 @@ export function QuickTimeEntry({
                 className="h-9"
                 min="1"
                 step="1"
+                title="Cantidad de horas normales trabajadas"
                 type="number"
                 value={form.minutes}
                 onChange={(event) => updateForm("minutes", event.target.value)}
@@ -652,6 +750,7 @@ export function QuickTimeEntry({
                 className="h-9"
                 min="0"
                 step="1"
+                title="Horas trabajadas fuera del horario habitual"
                 type="number"
                 value={form.overtimeMinutes}
                 onChange={(event) => updateForm("overtimeMinutes", event.target.value)}
@@ -659,7 +758,7 @@ export function QuickTimeEntry({
             </CompactField>
             <div className="flex items-center justify-between gap-2 rounded-md bg-muted/60 px-2 py-1 text-xs text-muted-foreground md:justify-end">
               <span>Total {formatMinutes((workedMinutes ?? 0) + (extraMinutes ?? 0))}</span>
-              <Button className="h-9" disabled={!canSubmit || isPending || isStopwatchRunning} type="submit">
+              <Button className="h-9" disabled={!canSubmit || isPending || isStopwatchRunning || !visibleProjects.length} type="submit">
                 <Save className="mr-2 h-4 w-4" />
                 {isPending ? "Guardando" : "Guardar"}
               </Button>
@@ -671,9 +770,9 @@ export function QuickTimeEntry({
       <section className="rounded-lg border bg-card shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
           <div>
-            <h2 className="text-sm font-semibold">Ultimos 30 dias</h2>
+            <h2 className="text-sm font-semibold">Últimos 30 días</h2>
             <p className="text-xs text-muted-foreground">
-              {entries.length} registros / {formatMinutes(entries.reduce((total, entry) => total + entry.minutes + entry.overtimeMinutes, 0))}
+              {visibleEntries.length} registros / {formatMinutes(visibleEntries.reduce((total, entry) => total + entry.minutes + entry.overtimeMinutes, 0))}
             </p>
           </div>
           <Button className="h-8" size="sm" variant="outline" onClick={() => setHistoryOpen(true)}>
@@ -689,7 +788,8 @@ export function QuickTimeEntry({
                 categories={categories}
                 expanded={expandedDays.has(group.key)}
                 group={group}
-                projects={localProjects}
+                projects={visibleProjects}
+                onOpenComments={setActiveCommentEntry}
                 onCommit={commitEntry}
                 onOptimisticUpdate={updateEntryOptimistically}
                 onToggle={() =>
@@ -703,7 +803,7 @@ export function QuickTimeEntry({
               />
             ))
           ) : (
-            <div className="px-3 py-8 text-center text-sm text-muted-foreground">No hay cargas en los ultimos 30 dias.</div>
+            <div className="px-3 py-8 text-center text-sm text-muted-foreground">No hay cargas en los últimos 30 días.</div>
           )}
         </div>
       </section>
@@ -711,13 +811,188 @@ export function QuickTimeEntry({
       {historyOpen ? (
         <HistoryModal
           categories={categories}
-          entries={entries}
-          projects={localProjects}
+          entries={visibleEntries}
+          onOpenComments={setActiveCommentEntry}
+          projects={visibleProjects}
           onClose={() => setHistoryOpen(false)}
           onCommit={commitEntry}
           onOptimisticUpdate={updateEntryOptimistically}
         />
       ) : null}
+      {activeCommentEntry?.commentThread ? (
+        <TimeEntryCommentModal
+          entry={activeCommentEntry}
+          thread={activeCommentEntry.commentThread}
+          onClose={() => setActiveCommentEntry(null)}
+          onThreadUpdated={(thread) => updateEntryThread(activeCommentEntry.id, thread)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function ProjectVisibilitySelector({
+  projects,
+  visibleProjectIds,
+  onClose,
+  onHideAll,
+  onShowAll,
+  onToggle
+}: {
+  projects: ProjectOption[];
+  visibleProjectIds: Set<string>;
+  onClose: () => void;
+  onHideAll: () => void;
+  onShowAll: () => void;
+  onToggle: (projectId: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query.trim().toLowerCase());
+  const filteredProjects = useMemo(
+    () =>
+      projects.filter((project) =>
+        `${project.name} ${project.client.name} ${project.projectType?.name ?? ""}`.toLowerCase().includes(deferredQuery)
+      ),
+    [deferredQuery, projects]
+  );
+
+  return (
+    <div className="absolute right-0 top-10 z-40 w-[min(420px,calc(100vw-2rem))] overflow-hidden rounded-lg border bg-card shadow-xl">
+      <div className="flex items-center justify-between gap-2 border-b p-3">
+        <div>
+          <div className="text-sm font-semibold">Proyectos visibles</div>
+          <div className="text-xs text-muted-foreground">{visibleProjectIds.size} seleccionados</div>
+        </div>
+        <Button className="h-8" size="sm" type="button" variant="ghost" onClick={onClose}>
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
+      <div className="space-y-2 p-3">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input className="h-9 pl-8" placeholder="Buscar proyecto o cliente" value={query} onChange={(event) => setQuery(event.target.value)} />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button className="h-8" size="sm" type="button" variant="outline" onClick={onShowAll}>
+            <Eye className="mr-2 h-3.5 w-3.5" />
+            Mostrar todos
+          </Button>
+          <Button className="h-8" size="sm" type="button" variant="outline" onClick={onHideAll}>
+            Ocultar todos
+          </Button>
+        </div>
+      </div>
+      <div className="max-h-80 overflow-y-auto border-t">
+        {filteredProjects.length ? (
+          filteredProjects.map((project) => (
+            <label key={project.id} className="flex cursor-pointer items-start gap-2 border-b px-3 py-2 text-sm last:border-0 hover:bg-muted/40">
+              <input
+                checked={visibleProjectIds.has(project.id)}
+                className="mt-1"
+                type="checkbox"
+                onChange={() => onToggle(project.id)}
+              />
+              <span className="min-w-0">
+                <span className="block truncate font-medium">{project.name}</span>
+                <span className="block truncate text-xs text-muted-foreground">{project.client.name}</span>
+              </span>
+            </label>
+          ))
+        ) : (
+          <div className="p-5 text-center text-sm text-muted-foreground">No hay proyectos con esa búsqueda.</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TimeEntryCommentModal({
+  entry,
+  thread,
+  onClose,
+  onThreadUpdated
+}: {
+  entry: EntryRow;
+  thread: TimeCommentThread;
+  onClose: () => void;
+  onThreadUpdated: (thread: TimeCommentThread) => void;
+}) {
+  const [message, setMessage] = useState("");
+  const [isPending, startTransition] = useTransition();
+  const threadRef = useRef(thread);
+  const onThreadUpdatedRef = useRef(onThreadUpdated);
+
+  useEffect(() => {
+    threadRef.current = thread;
+    onThreadUpdatedRef.current = onThreadUpdated;
+  }, [onThreadUpdated, thread]);
+
+  useEffect(() => {
+    const currentThread = threadRef.current;
+    void markTimeEntryThreadRead({ threadId: currentThread.id });
+    if (currentThread.unread) onThreadUpdatedRef.current({ ...currentThread, unread: false });
+  }, [thread.id]);
+
+  function submit() {
+    startTransition(async () => {
+      const result = await replyTimeEntryThread({ threadId: thread.id, message });
+      if (!result.ok) {
+        toast.error(result.message);
+        return;
+      }
+      onThreadUpdated(result.thread as TimeCommentThread);
+      setMessage("");
+      toast.success(result.message);
+    });
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border bg-card shadow-xl">
+        <header className="flex items-start justify-between gap-4 border-b p-5">
+          <div>
+            <div className="flex items-center gap-2">
+              <MessageSquare className="h-5 w-5 text-teal-600" />
+              <h2 className="text-lg font-semibold">Comentarios de la carga</h2>
+              {thread.status === "RESOLVED" ? <Badge variant="success">Resuelto</Badge> : <Badge variant="warning">Abierto</Badge>}
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {new Date(entry.date).toLocaleDateString("es-AR")} · {entry.project} · {entry.detail}
+            </p>
+          </div>
+          <Button disabled={isPending} size="sm" variant="ghost" onClick={onClose}>
+            Cerrar
+          </Button>
+        </header>
+
+        <div className="flex-1 space-y-3 overflow-y-auto p-5">
+          {thread.comments.map((comment) => (
+            <div key={comment.id} className={cn("flex", comment.mine ? "justify-end" : "justify-start")}>
+              <div className={cn("max-w-[85%] rounded-lg border px-3 py-2 text-sm", comment.mine ? "bg-primary text-primary-foreground" : "bg-background")}>
+                <div className="text-xs font-medium opacity-80">{comment.author}</div>
+                <div className="mt-1 whitespace-pre-wrap">{comment.message}</div>
+                <div className="mt-1 text-[11px] opacity-70">{new Date(comment.createdAt).toLocaleString("es-AR")}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <footer className="space-y-2 border-t p-4">
+          {thread.status === "RESOLVED" ? (
+            <div className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">El hilo fue marcado como resuelto.</div>
+          ) : (
+            <>
+              <Textarea value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Responder en el hilo" />
+              <div className="flex justify-end">
+                <Button disabled={isPending || !message.trim()} onClick={submit}>
+                  <MessageSquare className="mr-2 h-4 w-4" />
+                  Responder
+                </Button>
+              </div>
+            </>
+          )}
+        </footer>
+      </div>
     </div>
   );
 }
@@ -728,7 +1003,7 @@ function CategoryKindOverview({ stats }: { stats: Array<{ kind: string; minutes:
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <BarChart3 className="h-4 w-4 text-teal-600" />
-          <h2 className="text-sm font-semibold">Tiempo por tipo de categoria</h2>
+          <h2 className="text-sm font-semibold">Tiempo por tipo de categoría</h2>
         </div>
         <CategoryKindLegend />
       </div>
@@ -963,6 +1238,7 @@ function WorklogDay({
   projects,
   categories,
   onToggle,
+  onOpenComments,
   onOptimisticUpdate,
   onCommit
 }: {
@@ -971,6 +1247,7 @@ function WorklogDay({
   projects: ProjectOption[];
   categories: CategoryOption[];
   onToggle: () => void;
+  onOpenComments: (entry: EntryRow) => void;
   onOptimisticUpdate: (entryId: string, patch: EntryPatch) => void;
   onCommit: (entry: EntryRow) => void;
 }) {
@@ -1004,6 +1281,7 @@ function WorklogDay({
               categories={categories}
               entry={entry}
               projects={projects}
+              onOpenComments={onOpenComments}
               onCommit={onCommit}
               onOptimisticUpdate={onOptimisticUpdate}
             />
@@ -1018,12 +1296,14 @@ const EditableEntryRow = memo(function EditableEntryRow({
   entry,
   projects,
   categories,
+  onOpenComments,
   onOptimisticUpdate,
   onCommit
 }: {
   entry: EntryRow;
   projects: ProjectOption[];
   categories: CategoryOption[];
+  onOpenComments: (entry: EntryRow) => void;
   onOptimisticUpdate: (entryId: string, patch: EntryPatch) => void;
   onCommit: (entry: EntryRow) => void;
 }) {
@@ -1051,6 +1331,7 @@ const EditableEntryRow = memo(function EditableEntryRow({
     ];
   }, [entry, projects]);
   const selectedCategory = useMemo(() => categories.find((category) => category.id === draft.categoryId), [categories, draft.categoryId]);
+  const hasOpenThread = entry.commentThread?.status === "OPEN";
 
   useEffect(() => {
     draftRef.current = draft;
@@ -1133,7 +1414,7 @@ const EditableEntryRow = memo(function EditableEntryRow({
   }
 
   return (
-    <div className={cn("grid gap-1 px-3 py-2 text-sm transition-colors hover:bg-muted/30", status === "saving" && "bg-amber-500/5")}>
+    <div className={cn("grid gap-1 px-3 py-2 text-sm transition-colors hover:bg-muted/30", status === "saving" && "bg-amber-500/5", hasOpenThread && "bg-amber-500/10")}>
       <div className="grid gap-1 md:grid-cols-[140px_minmax(0,1fr)_190px_auto]">
         <Input className="h-8 text-xs" type="date" value={draft.date} onChange={(event) => updateDraft("date", event.target.value)} onKeyDown={onKeyDown} />
         <Select className="h-8 text-xs" value={draft.projectId} onChange={(event) => updateDraft("projectId", event.target.value)} onKeyDown={onKeyDown}>
@@ -1157,11 +1438,12 @@ const EditableEntryRow = memo(function EditableEntryRow({
         <Input className="h-8 text-xs" placeholder="Observaciones" value={draft.observations} onChange={(event) => updateDraft("observations", event.target.value)} onKeyDown={onKeyDown} />
       </div>
       <div className="grid gap-1 md:grid-cols-[110px_110px_1fr]">
-        <Input className="h-8 text-xs" min="1" step="1" type="number" value={draft.minutes} onChange={(event) => updateDraft("minutes", event.target.value)} onKeyDown={onKeyDown} />
+        <Input className="h-8 text-xs" min="1" step="1" title="Cantidad de horas normales trabajadas" type="number" value={draft.minutes} onChange={(event) => updateDraft("minutes", event.target.value)} onKeyDown={onKeyDown} />
         <Input
           className="h-8 text-xs"
           min="0"
           step="1"
+          title="Horas trabajadas fuera del horario habitual"
           type="number"
           value={draft.overtimeMinutes}
           onChange={(event) => updateDraft("overtimeMinutes", event.target.value)}
@@ -1169,6 +1451,12 @@ const EditableEntryRow = memo(function EditableEntryRow({
         />
         <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground md:justify-end">
           <span>{formatMinutes((minutesInputToMinutes(draft.minutes) ?? 0) + (minutesInputToMinutes(draft.overtimeMinutes, true) ?? 0))}</span>
+          {entry.commentThread ? (
+            <Button className="h-7 px-2" size="sm" type="button" variant={entry.commentThread.unread ? "outline" : "ghost"} onClick={() => onOpenComments(entry)}>
+              <MessageSquare className="mr-1 h-3.5 w-3.5" />
+              {entry.commentThread.unread ? "Pendiente" : "Comentarios"}
+            </Button>
+          ) : null}
           <span className={cn("w-20 text-right", status === "error" && "text-destructive", status === "saved" && "text-emerald-600")}>
             {status === "saving" ? "Guardando" : status === "saved" ? "Guardado" : status === "error" ? "Error" : ""}
           </span>
@@ -1183,6 +1471,7 @@ function HistoryModal({
   projects,
   categories,
   onClose,
+  onOpenComments,
   onOptimisticUpdate,
   onCommit
 }: {
@@ -1190,6 +1479,7 @@ function HistoryModal({
   projects: ProjectOption[];
   categories: CategoryOption[];
   onClose: () => void;
+  onOpenComments: (entry: EntryRow) => void;
   onOptimisticUpdate: (entryId: string, patch: EntryPatch) => void;
   onCommit: (entry: EntryRow) => void;
 }) {
@@ -1240,7 +1530,7 @@ function HistoryModal({
       <div className="flex h-full flex-col">
         <header className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
           <div>
-            <h2 className="text-base font-semibold">Historial de 30 dias</h2>
+            <h2 className="text-base font-semibold">Historial de 30 días</h2>
             <p className="text-xs text-muted-foreground">{filteredEntries.length} registros filtrados</p>
           </div>
           <Button size="icon" variant="ghost" onClick={onClose}>
@@ -1254,7 +1544,7 @@ function HistoryModal({
             <Input className="h-9 pl-8" placeholder="Buscar" value={query} onChange={(event) => setQuery(event.target.value)} />
           </div>
           <Select className="h-9" value={projectId} onChange={(event) => setProjectId(event.target.value)}>
-            <option value="ALL">Proyecto</option>
+            <option value="ALL">Todos los proyectos visibles</option>
             {projects.map((project) => (
               <option key={project.id} value={project.id}>
                 {project.name}
@@ -1262,7 +1552,7 @@ function HistoryModal({
             ))}
           </Select>
           <Select className="h-9" value={categoryId} onChange={(event) => setCategoryId(event.target.value)}>
-            <option value="ALL">Categoria</option>
+            <option value="ALL">Todas las categorías</option>
             {categories.map((category) => (
               <option key={category.id} value={category.id}>
                 {category.name}
@@ -1270,7 +1560,7 @@ function HistoryModal({
             ))}
           </Select>
           <Select className="h-9" value={categoryKind} onChange={(event) => setCategoryKind(event.target.value as "ALL" | CategoryKindKey)}>
-            <option value="ALL">Tipo</option>
+            <option value="ALL">Todos los tipos de hora</option>
             {categoryKindValues.map((kind) => (
               <option key={kind} value={kind}>
                 {categoryKindMeta[kind].label}
@@ -1303,6 +1593,7 @@ function HistoryModal({
                       categories={categories}
                       entry={entry}
                       projects={projects}
+                      onOpenComments={onOpenComments}
                       onCommit={onCommit}
                       onOptimisticUpdate={onOptimisticUpdate}
                     />
@@ -1312,7 +1603,7 @@ function HistoryModal({
               {visibleCount < filteredEntries.length ? (
                 <div className="p-4 text-center">
                   <Button variant="outline" onClick={() => setVisibleCount((current) => current + 80)}>
-                    Ver mas
+                    Ver más
                   </Button>
                 </div>
               ) : null}

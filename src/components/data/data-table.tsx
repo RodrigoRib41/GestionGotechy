@@ -61,7 +61,7 @@ function DataTableInner<TData, TValue>({
                 <tr key={headerGroup.id}>
                   {headerGroup.headers.map((header) => (
                     <th key={header.id} className="px-4 py-3 text-left font-medium text-muted-foreground">
-                      {header.isPlaceholder ? null : (
+                      {header.isPlaceholder ? null : header.column.getCanSort() ? (
                         <button
                           className="inline-flex items-center gap-1 text-left hover:text-foreground"
                           type="button"
@@ -70,6 +70,8 @@ function DataTableInner<TData, TValue>({
                           {flexRender(header.column.columnDef.header, header.getContext())}
                           {header.column.getIsSorted() === "asc" ? "asc" : header.column.getIsSorted() === "desc" ? "desc" : ""}
                         </button>
+                      ) : (
+                        flexRender(header.column.columnDef.header, header.getContext())
                       )}
                     </th>
                   ))}

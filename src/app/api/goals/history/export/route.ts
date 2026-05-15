@@ -1,11 +1,11 @@
-import { AuditAction, GoalPeriod, Role } from "@prisma/client";
+import { GoalPeriod, Role } from "@prisma/client";
 import { NextRequest } from "next/server";
 
 import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/permissions";
 
 export async function GET(request: NextRequest) {
-  const session = await requireRole([Role.ADMINISTRADOR]);
+  await requireRole([Role.ADMINISTRADOR]);
   const params = request.nextUrl.searchParams;
   const format = params.get("format") === "xlsx" ? "xlsx" : "csv";
   const period = parsePeriod(params.get("period"));
@@ -50,15 +50,6 @@ export async function GET(request: NextRequest) {
     take: 5000
   });
 
-  await prisma.auditLog.create({
-    data: {
-      action: AuditAction.EXPORT,
-      entity: "GoalComplianceHistory",
-      actorId: session.user.id,
-      metadata: { format, rows: rows.length, period, collaboratorId, goalId, state, from, to }
-    }
-  });
-
   if (format === "xlsx") {
     const ExcelJS = await import("exceljs");
     const workbook = new ExcelJS.Workbook();
@@ -100,7 +91,7 @@ const headers = [
   "Minutos esperados",
   "Minutos reales",
   "Minutos extra",
-  "Dias activos",
+  "Días activos",
   "Calculado"
 ];
 
@@ -133,7 +124,7 @@ function toExportRow(row: {
     "Minutos esperados": row.expectedMinutes,
     "Minutos reales": row.actualMinutes,
     "Minutos extra": row.overtimeMinutes,
-    "Dias activos": row.activeDays,
+    "Días activos": row.activeDays,
     Calculado: row.calculatedAt.toISOString()
   };
 }

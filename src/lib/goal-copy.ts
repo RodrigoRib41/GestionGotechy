@@ -26,13 +26,13 @@ export function buildGoalCopy(input: GoalCopyInput) {
   const minDailyPercent = numberValue(input.minDailyPercent);
   const period = periodLabel(input.period);
   const tolerance = tolerancePercent > 0 ? ` con tolerancia del ${tolerancePercent}%` : "";
-  const daily = minDailyPercent ? ` con un minimo diario del ${minDailyPercent}%` : "";
+  const daily = minDailyPercent ? ` con un mínimo diario del ${minDailyPercent}%` : "";
 
   switch (input.metricKind) {
     case "DAILY_MIN_PERCENT": {
       const percent = targetPercent ?? 50;
       return {
-        title: `Cumplir minimo diario del ${percent}%`,
+        title: `Cumplir mínimo diario del ${percent}%`,
         description: `Mantener al menos ${percent}% de carga diaria en cada periodo ${period}${tolerance}.`,
         summary: `${percent}% diario / ${period}`
       };
@@ -56,9 +56,9 @@ export function buildGoalCopy(input: GoalCopyInput) {
     case "MIN_ACTIVE_DAYS": {
       const days = Math.max(1, targetMinutes ?? 5);
       return {
-        title: `Registrar actividad al menos ${days} dias`,
-        description: `Registrar actividad al menos ${days} dias por periodo ${period}.`,
-        summary: `${days} dias activos`
+        title: `Registrar actividad al menos ${days} días`,
+        description: `Registrar actividad al menos ${days} días por periodo ${period}.`,
+        summary: `${days} días activos`
       };
     }
     case "PRIORITY_PROJECT_PERCENT":
@@ -101,7 +101,7 @@ export function buildGoalCopy(input: GoalCopyInput) {
       const minutes = targetMinutes ?? 0;
       return {
         title: `Cumplir ${formatMinutes(minutes)} por categoria`,
-        description: `Cumplir ${formatMinutes(minutes)} de carga ${period} en la categoria seleccionada${tolerance}.`,
+        description: `Cumplir ${formatMinutes(minutes)} de carga ${period} en la categoría seleccionada${tolerance}.`,
         summary: `${formatMinutes(minutes)} categoria`
       };
     }

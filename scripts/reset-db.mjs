@@ -19,8 +19,13 @@ async function main() {
   await prisma.$transaction(async (tx) => {
     await tx.$executeRawUnsafe(`
       TRUNCATE TABLE
+        "Notification",
+        "TimeEntryThreadRead",
+        "TimeEntryComment",
+        "TimeEntryThread",
         "TimeEntry",
         "TimeEntryFavorite",
+        "UserProjectVisibility",
         "TrackingTaskAttachment",
         "TrackingTaskHistory",
         "TrackingTask",
@@ -32,8 +37,7 @@ async function main() {
         "UserDashboardPreference",
         "ProjectMember",
         "Project",
-        "Client",
-        "AuditLog"
+        "Client"
       RESTART IDENTITY CASCADE;
     `);
 
@@ -82,10 +86,9 @@ async function seedConfiguration() {
   const statuses = [
     { name: "Pendiente", color: "#64748B", sortOrder: 10, isFinal: false, isBlocked: false },
     { name: "En progreso", color: "#2563EB", sortOrder: 20, isFinal: false, isBlocked: false },
-    { name: "Bloqueado", color: "#F97316", sortOrder: 30, isFinal: false, isBlocked: true },
-    { name: "En revision", color: "#8B5CF6", sortOrder: 40, isFinal: false, isBlocked: false },
-    { name: "Finalizado", color: "#16A34A", sortOrder: 50, isFinal: true, isBlocked: false },
-    { name: "Cancelado", color: "#EF4444", sortOrder: 60, isFinal: true, isBlocked: false }
+    { name: "Bloqueada", color: "#F97316", sortOrder: 30, isFinal: false, isBlocked: true },
+    { name: "Finalizada", color: "#16A34A", sortOrder: 50, isFinal: true, isBlocked: false },
+    { name: "Archivada", color: "#64748B", sortOrder: 60, isFinal: true, isBlocked: false }
   ];
 
   for (const status of statuses) {
@@ -116,7 +119,7 @@ async function seedConfiguration() {
   await prisma.goalObjective.create({
     data: {
       name: "Mantener 60% del total esperado",
-      description: "Todos los dias laborales deben tener al menos 50% registrado.",
+      description: "Todos los días laborales deben tener al menos 50% registrado.",
       metricKind: "MIN_EXPECTED_PERCENT",
       period: "WEEKLY",
       targetPercent: 60,
