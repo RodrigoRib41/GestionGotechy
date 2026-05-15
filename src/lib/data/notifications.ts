@@ -11,10 +11,10 @@ export async function getNotificationSnapshot(userId: string) {
     async () => {
       const [unreadCount, items] = await Promise.all([
         prisma.notification.count({
-          where: { userId, readAt: null, thread: { status: "OPEN" } }
+          where: { userId, readAt: null, OR: [{ threadId: null }, { thread: { status: "OPEN" } }] }
         }),
         prisma.notification.findMany({
-          where: { userId, thread: { status: "OPEN" } },
+          where: { userId, OR: [{ threadId: null }, { thread: { status: "OPEN" } }] },
           select: {
             id: true,
             title: true,
@@ -23,6 +23,7 @@ export async function getNotificationSnapshot(userId: string) {
             createdAt: true,
             timeEntryId: true,
             threadId: true,
+            trackingTaskId: true,
             timeEntry: { select: { userId: true } }
           },
           orderBy: { createdAt: "desc" },
@@ -40,7 +41,12 @@ export async function getNotificationSnapshot(userId: string) {
           createdAt: item.createdAt.toISOString(),
           threadId: item.threadId,
           timeEntryId: item.timeEntryId,
-          href: item.timeEntry?.userId === userId ? `/time?entry=${item.timeEntryId ?? ""}` : `/reports?entry=${item.timeEntryId ?? ""}`
+          trackingTaskId: item.trackingTaskId,
+          href: item.trackingTaskId
+            ? `/tracking?task=${item.trackingTaskId}`
+            : item.timeEntry?.userId === userId
+              ? `/time?entry=${item.timeEntryId ?? ""}`
+              : `/reports?entry=${item.timeEntryId ?? ""}`
         }))
       };
     },

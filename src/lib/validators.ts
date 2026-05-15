@@ -208,6 +208,15 @@ export const trackingCommentSchema = z.object({
   message: z.string().min(1).max(1000)
 });
 
+export const trackingCommentEditSchema = z.object({
+  historyId: z.string().min(1),
+  message: z.string().min(1).max(1000)
+});
+
+export const trackingCommentDeleteSchema = z.object({
+  historyId: z.string().min(1)
+});
+
 export const trackingTimeLogSchema = z.object({
   taskId: z.string().min(1),
   minutes: z.coerce.number().int().min(1).max(24 * 60),
@@ -250,7 +259,8 @@ export const timeImportPreviewSchema = z.object({
 
 export const timeImportCommitSchema = timeImportPreviewSchema.extend({
   fileName: z.string().max(220).optional(),
-  autoCreateMissing: z.coerce.boolean().default(false)
+  autoCreateMissing: z.coerce.boolean().default(false),
+  pin: z.string().min(4).max(32)
 });
 
 export const disabledUserDeleteSchema = z.object({

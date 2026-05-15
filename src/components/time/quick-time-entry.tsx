@@ -36,6 +36,7 @@ import { toast } from "sonner";
 import {
   createTimeEntry,
   deleteTimeEntryFavorite,
+  loadTimeEntryContextSnapshot,
   patchTimeEntry,
   saveTimeEntryFavorite,
   updateTimeEntryFavorite
@@ -49,6 +50,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { useRealtimeEvent } from "@/components/realtime/realtime-provider";
 
 type ProjectOption = {
   id: string;
@@ -197,11 +199,13 @@ export function QuickTimeEntry({
   const [visibleProjectIds, setVisibleProjectIds] = useState(() => new Set(initialVisibleProjectIds.length ? initialVisibleProjectIds : projects.map((project) => project.id)));
   const [projectSelectorOpen, setProjectSelectorOpen] = useState(false);
   const [activeCommentEntry, setActiveCommentEntry] = useState<EntryRow | null>(null);
+  const [commentFilter, setCommentFilter] = useState<"ALL" | "WITH" | "PENDING" | "RESOLVED">("ALL");
   const [favorites, setFavorites] = useState(initialFavorites);
   const [selectedFavoriteId, setSelectedFavoriteId] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [categoryKindFilter, setCategoryKindFilter] = useState<"ALL" | CategoryKindKey>("ALL");
   const [isPending, startTransition] = useTransition();
+  const realtimeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const projectById = useMemo(() => new Map(localProjects.map((project) => [project.id, project])), [localProjects]);
   const visibleProjects = useMemo(() => localProjects.filter((project) => visibleProjectIds.has(project.id)), [localProjects, visibleProjectIds]);
   const visibleFavorites = useMemo(() => favorites.filter((favorite) => visibleProjectIds.has(favorite.projectId)), [favorites, visibleProjectIds]);
@@ -223,6 +227,28 @@ export function QuickTimeEntry({
     minutes: "30",
     overtimeMinutes: "0"
   });
+
+  const refreshTimeContext = useCallback(() => {
+    if (realtimeTimerRef.current) clearTimeout(realtimeTimerRef.current);
+    realtimeTimerRef.current = setTimeout(() => {
+      startTransition(async () => {
+        const snapshot = await loadTimeEntryContextSnapshot();
+        setEntries(snapshot.recentEntries as EntryRow[]);
+        setLocalProjects(snapshot.projects as ProjectOption[]);
+        setFavorites(snapshot.favorites as FavoriteOption[]);
+        setVisibleProjectIds(new Set(snapshot.visibleProjectIds.length ? snapshot.visibleProjectIds : snapshot.projects.map((project) => project.id)));
+      });
+    }, 250);
+  }, []);
+
+  useRealtimeEvent(
+    useCallback(
+      (message) => {
+        if (message.type === "TIME_ENTRY_COMMENT") refreshTimeContext();
+      },
+      [refreshTimeContext]
+    )
+  );
   const [stopwatch, setStopwatch] = useState<StopwatchState>({ startedAt: null, finishedAt: null, elapsedMs: 0 });
   const [stopwatchNow, setStopwatchNow] = useState(() => Date.now());
   const selectedProject = projectById.get(form.projectId);
@@ -251,7 +277,20 @@ export function QuickTimeEntry({
 
     return { consumedMinutes, remainingMinutes, percent, low: remainingMinutes < lowAvailabilityThreshold };
   }, [selectedProject]);
-  const visibleEntries = useMemo(() => entries.filter((entry) => visibleProjectIds.has(entry.projectId)), [entries, visibleProjectIds]);
+  const visibleEntries = useMemo(
+    () =>
+      entries.filter((entry) => {
+        if (!visibleProjectIds.has(entry.projectId)) return false;
+        const state = getTimeEntryCommentState(entry);
+        return (
+          commentFilter === "ALL" ||
+          (commentFilter === "WITH" && state !== "NONE") ||
+          (commentFilter === "PENDING" && (state === "PENDING" || state === "NEW")) ||
+          (commentFilter === "RESOLVED" && state === "RESOLVED")
+        );
+      }),
+    [commentFilter, entries, visibleProjectIds]
+  );
   const groupedDays = useMemo(() => groupEntriesByDay(visibleEntries), [visibleEntries]);
   const categoryKindStats = useMemo(() => buildCategoryKindStats(visibleEntries, categoryById), [categoryById, visibleEntries]);
   const [expandedDays, setExpandedDays] = useState<Set<string>>(() => new Set(groupEntriesByDay(recentEntries).slice(0, 3).map((group) => group.key)));
@@ -297,6 +336,12 @@ export function QuickTimeEntry({
       return;
     }
   }, [favoriteCacheKey, favorites]);
+
+  useEffect(() => {
+    return () => {
+      if (realtimeTimerRef.current) clearTimeout(realtimeTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     try {
@@ -775,10 +820,18 @@ export function QuickTimeEntry({
               {visibleEntries.length} registros / {formatMinutes(visibleEntries.reduce((total, entry) => total + entry.minutes + entry.overtimeMinutes, 0))}
             </p>
           </div>
-          <Button className="h-8" size="sm" variant="outline" onClick={() => setHistoryOpen(true)}>
-            <Maximize2 className="mr-2 h-3.5 w-3.5" />
-            Expandir historial
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Select className="h-8 w-56 text-xs" value={commentFilter} onChange={(event) => setCommentFilter(event.target.value as typeof commentFilter)}>
+              <option value="ALL">Todos los registros</option>
+              <option value="WITH">Solo registros con comentarios</option>
+              <option value="PENDING">Solo comentarios pendientes</option>
+              <option value="RESOLVED">Solo comentarios resueltos</option>
+            </Select>
+            <Button className="h-8" size="sm" variant="outline" onClick={() => setHistoryOpen(true)}>
+              <Maximize2 className="mr-2 h-3.5 w-3.5" />
+              Expandir historial
+            </Button>
+          </div>
         </div>
         <div className="divide-y">
           {groupedDays.length ? (
@@ -1331,7 +1384,8 @@ const EditableEntryRow = memo(function EditableEntryRow({
     ];
   }, [entry, projects]);
   const selectedCategory = useMemo(() => categories.find((category) => category.id === draft.categoryId), [categories, draft.categoryId]);
-  const hasOpenThread = entry.commentThread?.status === "OPEN";
+  const commentState = getTimeEntryCommentState(entry);
+  const hasOpenThread = commentState === "NEW" || commentState === "PENDING";
 
   useEffect(() => {
     draftRef.current = draft;
@@ -1414,7 +1468,7 @@ const EditableEntryRow = memo(function EditableEntryRow({
   }
 
   return (
-    <div className={cn("grid gap-1 px-3 py-2 text-sm transition-colors hover:bg-muted/30", status === "saving" && "bg-amber-500/5", hasOpenThread && "bg-amber-500/10")}>
+    <div className={cn("grid gap-1 px-3 py-2 text-sm transition-colors hover:bg-muted/30", status === "saving" && "bg-amber-500/5", hasOpenThread && "bg-red-500/10 shadow-[inset_4px_0_0_rgba(239,68,68,0.55)]")}>
       <div className="grid gap-1 md:grid-cols-[140px_minmax(0,1fr)_190px_auto]">
         <Input className="h-8 text-xs" type="date" value={draft.date} onChange={(event) => updateDraft("date", event.target.value)} onKeyDown={onKeyDown} />
         <Select className="h-8 text-xs" value={draft.projectId} onChange={(event) => updateDraft("projectId", event.target.value)} onKeyDown={onKeyDown}>
@@ -1454,7 +1508,7 @@ const EditableEntryRow = memo(function EditableEntryRow({
           {entry.commentThread ? (
             <Button className="h-7 px-2" size="sm" type="button" variant={entry.commentThread.unread ? "outline" : "ghost"} onClick={() => onOpenComments(entry)}>
               <MessageSquare className="mr-1 h-3.5 w-3.5" />
-              {entry.commentThread.unread ? "Pendiente" : "Comentarios"}
+              {entry.commentThread.unread ? "Nuevo comentario" : "Comentario pendiente"}
             </Button>
           ) : null}
           <span className={cn("w-20 text-right", status === "error" && "text-destructive", status === "saved" && "text-emerald-600")}>
@@ -1487,6 +1541,7 @@ function HistoryModal({
   const [projectId, setProjectId] = useState("ALL");
   const [categoryId, setCategoryId] = useState("ALL");
   const [categoryKind, setCategoryKind] = useState<"ALL" | CategoryKindKey>("ALL");
+  const [commentFilter, setCommentFilter] = useState<"ALL" | "WITH" | "PENDING" | "RESOLVED">("ALL");
   const [date, setDate] = useState("");
   const [sort, setSort] = useState<"desc" | "asc">("desc");
   const [visibleCount, setVisibleCount] = useState(80);
@@ -1503,18 +1558,24 @@ function HistoryModal({
       const matchesCategory = categoryId === "ALL" || entry.categoryId === categoryId;
       const matchesKind = categoryKind === "ALL" || entry.categoryKind === categoryKind;
       const matchesDate = !date || entry.date.slice(0, 10) === date;
+      const commentState = getTimeEntryCommentState(entry);
+      const matchesComment =
+        commentFilter === "ALL" ||
+        (commentFilter === "WITH" && commentState !== "NONE") ||
+        (commentFilter === "PENDING" && (commentState === "PENDING" || commentState === "NEW")) ||
+        (commentFilter === "RESOLVED" && commentState === "RESOLVED");
 
-      return matchesText && matchesProject && matchesCategory && matchesKind && matchesDate;
+      return matchesText && matchesProject && matchesCategory && matchesKind && matchesDate && matchesComment;
     });
 
     return [...list].sort((a, b) => (sort === "desc" ? b.date.localeCompare(a.date) : a.date.localeCompare(b.date)));
-  }, [categoryId, categoryKind, date, deferredQuery, entries, projectId, sort]);
+  }, [categoryId, categoryKind, commentFilter, date, deferredQuery, entries, projectId, sort]);
   const visibleEntries = filteredEntries.slice(0, visibleCount);
   const groups = useMemo(() => groupEntriesByDay(visibleEntries, sort), [sort, visibleEntries]);
 
   useEffect(() => {
     setVisibleCount(80);
-  }, [categoryId, categoryKind, date, deferredQuery, projectId, sort]);
+  }, [categoryId, categoryKind, commentFilter, date, deferredQuery, projectId, sort]);
 
   useEffect(() => {
     function onKeyDown(event: globalThis.KeyboardEvent) {
@@ -1538,7 +1599,7 @@ function HistoryModal({
           </Button>
         </header>
 
-        <div className="grid gap-2 border-b bg-card/80 p-3 md:grid-cols-[minmax(220px,1fr)_180px_180px_170px_150px_130px]">
+        <div className="grid gap-2 border-b bg-card/80 p-3 md:grid-cols-[minmax(220px,1fr)_180px_180px_170px_210px_150px_130px]">
           <div className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input className="h-9 pl-8" placeholder="Buscar" value={query} onChange={(event) => setQuery(event.target.value)} />
@@ -1566,6 +1627,12 @@ function HistoryModal({
                 {categoryKindMeta[kind].label}
               </option>
             ))}
+          </Select>
+          <Select className="h-9" value={commentFilter} onChange={(event) => setCommentFilter(event.target.value as typeof commentFilter)}>
+            <option value="ALL">Todos los registros</option>
+            <option value="WITH">Solo registros con comentarios</option>
+            <option value="PENDING">Solo comentarios pendientes</option>
+            <option value="RESOLVED">Solo comentarios resueltos</option>
           </Select>
           <Input className="h-9" type="date" value={date} onChange={(event) => setDate(event.target.value)} />
           <Select className="h-9" value={sort} onChange={(event) => setSort(event.target.value as "desc" | "asc")}>
@@ -1739,6 +1806,12 @@ function draftToPatch(draft: FormState, fields: DraftField[]) {
 
 function minutesToInput(minutes: number) {
   return Math.max(0, Math.round(minutes)).toString();
+}
+
+function getTimeEntryCommentState(entry: EntryRow) {
+  if (!entry.commentThread) return "NONE";
+  if (entry.commentThread.status === "RESOLVED") return "RESOLVED";
+  return entry.commentThread.unread ? "NEW" : "PENDING";
 }
 
 function minutesInputToMinutes(value: string, allowZero = false) {

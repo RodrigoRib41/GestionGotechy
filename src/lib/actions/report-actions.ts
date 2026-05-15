@@ -1,10 +1,10 @@
 "use server";
 
-import { CategoryKind, ClientStatus, Prisma, ProjectStatus, Role } from "@prisma/client";
+import { CategoryKind, ClientStatus, Prisma, ProjectStatus } from "@prisma/client";
 import { revalidatePath, revalidateTag } from "next/cache";
 
 import { prisma } from "@/lib/prisma";
-import { requireRole, requireSuperadmin } from "@/lib/permissions";
+import { requireSuperadmin } from "@/lib/permissions";
 import { assertRateLimit } from "@/lib/rate-limit";
 import { reportDeletePreviewSchema, reportDeleteSchema, timeImportCommitSchema, timeImportPreviewSchema } from "@/lib/validators";
 
@@ -110,7 +110,7 @@ export async function deleteTimeHistory(input: unknown) {
 }
 
 export async function previewTimeImport(input: unknown) {
-  const session = await requireRole([Role.ADMINISTRADOR]);
+  const session = await requireSuperadmin();
   assertRateLimit(`report-import-preview:${session.user.id}`, 20, 60_000);
 
   const parsed = timeImportPreviewSchema.safeParse(input);
@@ -125,13 +125,23 @@ export async function previewTimeImport(input: unknown) {
 }
 
 export async function importTimeEntries(input: unknown) {
-  const session = await requireRole([Role.ADMINISTRADOR]);
+  const session = await requireSuperadmin();
   assertRateLimit(`report-import:${session.user.id}`, 5, 60_000);
 
   const parsed = timeImportCommitSchema.safeParse(input);
 
   if (!parsed.success) {
     return { ok: false, message: parsed.error.issues.at(0)?.message ?? "Archivo inválido" };
+  }
+
+  const configuredPin = process.env.REPORT_DELETE_PIN;
+
+  if (!configuredPin) {
+    return { ok: false, message: "REPORT_DELETE_PIN no estÃ¡ configurado en el servidor" };
+  }
+
+  if (parsed.data.pin !== configuredPin) {
+    return { ok: false, message: "PIN invÃ¡lido" };
   }
 
   const initialPreview = await buildImportPreview(parsed.data.rows);

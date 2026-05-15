@@ -110,6 +110,15 @@ enum TimeEntryThreadStatus {
 
 enum NotificationType {
   TIME_ENTRY_COMMENT
+  TRACKING_TASK_ASSIGNED
+  TRACKING_TASK_STATUS
+  TRACKING_TASK_COMMENT
+}
+
+enum RealtimeEventType {
+  NOTIFICATION
+  TRACKING
+  TIME_ENTRY_COMMENT
 }
 
 model User {
@@ -149,6 +158,7 @@ model User {
   resolvedTimeEntryThreads  TimeEntryThread[]         @relation("TimeEntryThreadResolver")
   timeEntryComments         TimeEntryComment[]        @relation("TimeEntryCommentAuthor")
   notifications             Notification[]
+  realtimeEvents            RealtimeEvent[]
   timeEntryThreadReads      TimeEntryThreadRead[]
 
   @@index([role])
@@ -415,22 +425,38 @@ model TimeEntryThreadRead {
 }
 
 model Notification {
-  id          String           @id @default(cuid())
-  type        NotificationType
-  title       String
-  body        String?
-  readAt      DateTime?
-  createdAt   DateTime         @default(now())
-  userId      String
-  threadId    String?
-  timeEntryId String?
-  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  thread      TimeEntryThread? @relation(fields: [threadId], references: [id], onDelete: Cascade)
-  timeEntry   TimeEntry?       @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
+  id             String           @id @default(cuid())
+  type           NotificationType
+  title          String
+  body           String?
+  readAt         DateTime?
+  createdAt      DateTime         @default(now())
+  userId         String
+  threadId       String?
+  timeEntryId    String?
+  trackingTaskId String?
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  thread         TimeEntryThread? @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  timeEntry      TimeEntry?       @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
+  trackingTask   TrackingTask?    @relation(fields: [trackingTaskId], references: [id], onDelete: Cascade)
 
   @@index([userId, readAt, createdAt])
   @@index([threadId])
   @@index([timeEntryId])
+  @@index([trackingTaskId])
+}
+
+model RealtimeEvent {
+  id        String            @id @default(cuid())
+  type      RealtimeEventType
+  payload   Json?
+  userId    String?
+  createdAt DateTime          @default(now())
+  user      User?             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([type, createdAt])
+  @@index([userId, createdAt])
 }
 
 model TimeImportBatch {
@@ -668,6 +694,7 @@ model TrackingTask {
   status           TrackingTaskStatus       @relation(fields: [statusId], references: [id], onDelete: Restrict)
   history          TrackingTaskHistory[]
   attachments      TrackingTaskAttachment[]
+  notifications    Notification[]
 
   @@index([assigneeId, statusId])
   @@index([clientId, projectId])

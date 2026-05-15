@@ -7,6 +7,7 @@ import { revalidatePath, revalidateTag } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireRole, requireSession } from "@/lib/permissions";
 import { assertRateLimit } from "@/lib/rate-limit";
+import { createNotificationWithRealtime, emitRealtimeEvent } from "@/lib/realtime";
 import { timeEntryCommentSchema, timeEntryThreadIdSchema, timeEntryThreadReplySchema } from "@/lib/validators";
 
 const threadInclude = {
@@ -108,17 +109,17 @@ export async function createTimeEntryThreadComment(input: unknown) {
     });
 
     if (entry.userId !== session.user.id) {
-      await tx.notification.create({
-        data: {
-          userId: entry.userId,
-          type: "TIME_ENTRY_COMMENT",
-          title: "Nuevo comentario en una carga de horas",
-          body: `${entry.project.name}: ${entry.detail}`,
-          threadId: savedThread.id,
-          timeEntryId: entry.id
-        }
+      await createNotificationWithRealtime(tx, {
+        userId: entry.userId,
+        type: "TIME_ENTRY_COMMENT",
+        title: "Nuevo comentario en una carga de horas",
+        body: `${entry.project.name}: ${entry.detail}`,
+        threadId: savedThread.id,
+        timeEntryId: entry.id
       });
     }
+
+    await emitRealtimeEvent(tx, "TIME_ENTRY_COMMENT", { action: "upsert", timeEntryId: entry.id, threadId: savedThread.id });
 
     return tx.timeEntryThread.findUniqueOrThrow({
       where: { id: savedThread.id },
@@ -175,17 +176,17 @@ export async function replyTimeEntryThread(input: unknown) {
     });
 
     if (notifyUserId !== session.user.id) {
-      await tx.notification.create({
-        data: {
-          userId: notifyUserId,
-          type: "TIME_ENTRY_COMMENT",
-          title: "Nueva respuesta en una carga de horas",
-          body: `${thread.timeEntry.project.name}: ${thread.timeEntry.detail}`,
-          threadId: thread.id,
-          timeEntryId: thread.timeEntryId
-        }
+      await createNotificationWithRealtime(tx, {
+        userId: notifyUserId,
+        type: "TIME_ENTRY_COMMENT",
+        title: "Nueva respuesta en una carga de horas",
+        body: `${thread.timeEntry.project.name}: ${thread.timeEntry.detail}`,
+        threadId: thread.id,
+        timeEntryId: thread.timeEntryId
       });
     }
+
+    await emitRealtimeEvent(tx, "TIME_ENTRY_COMMENT", { action: "reply", timeEntryId: thread.timeEntryId, threadId: thread.id });
 
     return tx.timeEntryThread.findUniqueOrThrow({
       where: { id: thread.id },
@@ -256,14 +257,13 @@ export async function resolveTimeEntryThread(input: unknown) {
     return { ok: false, message: "Solo quien inicio el comentario puede resolverlo" };
   }
 
-  const updated = await prisma.timeEntryThread.update({
-    where: { id: thread.id },
-    data: { status: "RESOLVED", resolvedAt: new Date(), resolvedById: session.user.id },
-    include: threadInclude
+  await prisma.$transaction(async (tx) => {
+    await tx.timeEntryThread.delete({ where: { id: thread.id } });
+    await emitRealtimeEvent(tx, "TIME_ENTRY_COMMENT", { action: "delete", timeEntryId: thread.timeEntryId, threadId: thread.id });
   });
 
   revalidateCommentSurfaces();
-  return { ok: true, message: "Hilo resuelto", thread: serializeThread(updated, session.user.id) };
+  return { ok: true, message: "Hilo resuelto y eliminado", timeEntryId: thread.timeEntryId, threadId: thread.id, thread: null };
 }
 
 function serializeThread(thread: ThreadWithDetails, currentUserId: string) {

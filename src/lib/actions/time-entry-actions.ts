@@ -7,6 +7,7 @@ import { revalidateTag } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { isSuperadmin, requireSession } from "@/lib/permissions";
 import { assertRateLimit } from "@/lib/rate-limit";
+import { getTimeEntryContext } from "@/lib/data/time";
 import { timeEntryFavoriteSchema, timeEntryPatchSchema, timeEntrySchema } from "@/lib/validators";
 
 function revalidateTimeSurfaces() {
@@ -451,4 +452,9 @@ function serializeFavorite(favorite: {
     category: favorite.category.name,
     categoryKind: favorite.category.kind
   };
+}
+
+export async function loadTimeEntryContextSnapshot() {
+  await requireSession();
+  return getTimeEntryContext();
 }

@@ -182,7 +182,7 @@ export async function toggleProjectStatus(projectId: string) {
 }
 
 export async function deleteProject(projectId: string) {
-  await requireRole([Role.ADMINISTRADOR]);
+  await requireSuperadmin();
   const [entryCount, taskCount] = await Promise.all([
     prisma.timeEntry.count({ where: { projectId } }),
     prisma.trackingTask.count({ where: { projectId } })
@@ -203,7 +203,7 @@ export async function deleteProject(projectId: string) {
 }
 
 export async function deleteProjects(input: unknown) {
-  await requireRole([Role.ADMINISTRADOR]);
+  await requireSuperadmin();
   const parsed = bulkProjectDeleteSchema.safeParse(input);
 
   if (!parsed.success) {
@@ -282,7 +282,7 @@ export async function updateClient(input: unknown) {
 }
 
 export async function deleteClient(clientId: string) {
-  await requireRole([Role.ADMINISTRADOR]);
+  await requireSuperadmin();
   const [entryCount, projectCount] = await Promise.all([
     prisma.timeEntry.count({ where: { clientId } }),
     prisma.project.count({ where: { clientId } })
@@ -303,7 +303,7 @@ export async function deleteClient(clientId: string) {
 }
 
 export async function deleteClients(input: unknown) {
-  await requireRole([Role.ADMINISTRADOR]);
+  await requireSuperadmin();
   const parsed = bulkClientDeleteSchema.safeParse(input);
 
   if (!parsed.success) {
@@ -857,7 +857,7 @@ export async function deleteProjectType(projectTypeId: string) {
 }
 
 export async function updateWorkSchedule(input: unknown) {
-  await requireSuperadmin();
+  await requireRole([Role.ADMINISTRADOR]);
   const parsed = workScheduleSchema.safeParse(input);
 
   if (!parsed.success) {

@@ -2,7 +2,7 @@ import { subDays } from "date-fns";
 import { unstable_cache } from "next/cache";
 
 import { auth } from "@/auth";
-import { canExportTracking, canManageTracking } from "@/lib/permissions";
+import { canDeleteTracking, canExportTracking, canManageTracking, canViewTracking } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 
 type TrackingScope = {
@@ -19,7 +19,7 @@ const demoStatuses = [
 ];
 
 const demoTrackingData = {
-  permissions: { userId: "demo", canManage: true, canExport: true },
+  permissions: { userId: "demo", canManage: true, canExport: true, canDelete: true },
   statuses: demoStatuses,
   clients: [
     { id: "c1", name: "Cliente Demo" },
@@ -81,7 +81,8 @@ const demoTrackingData = {
       message: "Tarea creada",
       minutes: null,
       createdAt: subDays(new Date(), 2).toISOString(),
-      actor: "Sistema"
+      actor: "Sistema",
+      actorId: null
     }
   ]
 };
@@ -94,7 +95,7 @@ export async function getTrackingData() {
   try {
     const session = await auth();
     const userId = session?.user.id ?? "";
-    const globalScope = canManageTracking(session) || canExportTracking(session);
+    const globalScope = canViewTracking(session);
     const scopeKey = globalScope ? "global" : `user:${userId}`;
 
     const data = await unstable_cache(
@@ -108,12 +109,33 @@ export async function getTrackingData() {
       permissions: {
         userId,
         canManage: canManageTracking(session),
-        canExport: canExportTracking(session)
+        canExport: canExportTracking(session),
+        canDelete: canDeleteTracking(session)
       }
     };
   } catch {
     return demoTrackingData;
   }
+}
+
+export async function getFreshTrackingData() {
+  if (!process.env.DATABASE_URL) {
+    return demoTrackingData;
+  }
+
+  const session = await auth();
+  const userId = session?.user.id ?? "";
+  const data = await buildTrackingData({ userId, globalScope: canViewTracking(session) });
+
+  return {
+    ...data,
+    permissions: {
+      userId,
+      canManage: canManageTracking(session),
+      canExport: canExportTracking(session),
+      canDelete: canDeleteTracking(session)
+    }
+  };
 }
 
 export async function hasAssignedTrackingTasks(userId: string) {
@@ -187,6 +209,7 @@ async function buildTrackingData({ userId, globalScope }: TrackingScope) {
           message: true,
           minutes: true,
           createdAt: true,
+          actorId: true,
           actor: { select: { name: true, email: true } }
         },
         orderBy: { createdAt: "desc" },
@@ -225,7 +248,8 @@ async function buildTrackingData({ userId, globalScope }: TrackingScope) {
       message: item.message,
       minutes: item.minutes,
       createdAt: item.createdAt.toISOString(),
-      actor: item.actor?.name ?? item.actor?.email ?? "Sistema"
+      actor: item.actor?.name ?? item.actor?.email ?? "Sistema",
+      actorId: item.actorId
     }))
   };
 }

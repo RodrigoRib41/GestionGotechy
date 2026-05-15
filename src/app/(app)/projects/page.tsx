@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 
 import { auth } from "@/auth";
 import { getProjectsPageData } from "@/lib/data/resources";
-import { canManageResources } from "@/lib/permissions";
+import { canDeleteResources, canManageResources } from "@/lib/permissions";
 import { ProjectsClient } from "@/components/resources/projects-client";
 
 export default async function ProjectsPage() {
@@ -13,5 +13,5 @@ export default async function ProjectsPage() {
 
   const data = await getProjectsPageData();
 
-  return <ProjectsClient clients={data.clients} projectTypes={data.projectTypes} projects={data.projects} />;
+  return <ProjectsClient canDelete={canDeleteResources(session)} clients={data.clients} projectTypes={data.projectTypes} projects={data.projects} />;
 }

@@ -3,7 +3,7 @@
 import { ColumnDef } from "@tanstack/react-table";
 import { AlertTriangle, CheckCircle2, Download, FileSpreadsheet, FileText, Loader2, MessageSquare, Trash2, Upload, X } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 
 import { logReportExport } from "@/lib/actions/resource-actions";
@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { useRealtimeEvent } from "@/components/realtime/realtime-provider";
 
 type ReportRow = {
   id: string;
@@ -109,10 +110,12 @@ type ImportPreview = {
 export function ReportsClient({
   rows,
   canDeleteHistory = false,
+  canImportHistory = false,
   currentUserId
 }: {
   rows: ReportRow[];
   canDeleteHistory?: boolean;
+  canImportHistory?: boolean;
   currentUserId: string;
 }) {
   const router = useRouter();
@@ -127,6 +130,7 @@ export function ReportsClient({
   const [category, setCategory] = useState("");
   const [categoryKind, setCategoryKind] = useState<"" | CategoryKindKey>("");
   const [onlyOvertime, setOnlyOvertime] = useState(false);
+  const [commentFilter, setCommentFilter] = useState<"ALL" | "WITH" | "PENDING" | "RESOLVED">("ALL");
   const [importOpen, setImportOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteMode, setDeleteMode] = useState<"range" | "all">("range");
@@ -136,6 +140,15 @@ export function ReportsClient({
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [deleteSummary, setDeleteSummary] = useState<DeleteSummary | null>(null);
   const [commentRow, setCommentRow] = useState<ReportRow | null>(null);
+
+  useRealtimeEvent(
+    useCallback(
+      (message) => {
+        if (message.type === "TIME_ENTRY_COMMENT") router.refresh();
+      },
+      [router]
+    )
+  );
 
   useEffect(() => {
     setLocalRows(rows);
@@ -151,6 +164,7 @@ export function ReportsClient({
   const filtered = useMemo(() => {
     return localRows.filter((row) => {
       const date = row.date.slice(0, 10);
+      const commentState = getReportCommentState(row);
       return (
         (!from || date >= from) &&
         (!to || date <= to) &&
@@ -159,10 +173,14 @@ export function ReportsClient({
         (!collaborator || row.collaborator === collaborator) &&
         (!category || row.category === category) &&
         (!categoryKind || row.categoryKind === categoryKind) &&
-        (!onlyOvertime || row.overtimeMinutes > 0)
+        (!onlyOvertime || row.overtimeMinutes > 0) &&
+        (commentFilter === "ALL" ||
+          (commentFilter === "WITH" && commentState !== "NONE") ||
+          (commentFilter === "PENDING" && (commentState === "PENDING" || commentState === "NEW")) ||
+          (commentFilter === "RESOLVED" && commentState === "RESOLVED"))
       );
     });
-  }, [category, categoryKind, client, collaborator, from, localRows, onlyOvertime, project, to]);
+  }, [category, categoryKind, client, collaborator, commentFilter, from, localRows, onlyOvertime, project, to]);
 
   const clients = Array.from(new Set(localRows.map((row) => row.client))).sort();
   const projects = Array.from(new Set(localRows.map((row) => row.project))).sort();
@@ -191,12 +209,18 @@ export function ReportsClient({
       cell: ({ row }) => {
         const thread = row.original.commentThread;
         const disabled = !thread && !isWithinLastDays(row.original.date, 30);
+        const commentState = getReportCommentState(row.original);
 
         return (
-          <Button disabled={disabled} size="sm" variant={thread?.status === "OPEN" ? "outline" : "ghost"} onClick={() => setCommentRow(row.original)}>
-            <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
-            {thread?.status === "OPEN" ? "Ver hilo" : "Comentar"}
-          </Button>
+          <div className="flex flex-col items-start gap-1">
+            {commentState === "NEW" || commentState === "PENDING" ? (
+              <Badge variant="destructive">{commentState === "NEW" ? "Nuevo comentario" : "Comentario pendiente"}</Badge>
+            ) : null}
+            <Button disabled={disabled} size="sm" variant={thread?.status === "OPEN" ? "outline" : "ghost"} onClick={() => setCommentRow(row.original)}>
+              <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
+              {thread?.status === "OPEN" ? "Ver hilo" : "Comentar"}
+            </Button>
+          </div>
         );
       }
     }
@@ -389,10 +413,12 @@ export function ReportsClient({
             <p className="mt-1 text-sm text-muted-foreground">Todas las cargas con filtros avanzados y exportación corporativa por colaborador.</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button onClick={() => setImportOpen(true)} variant="default">
-              <Upload className="mr-2 h-4 w-4" />
-              Importar registros
-            </Button>
+            {canImportHistory ? (
+              <Button onClick={() => setImportOpen(true)} variant="default">
+                <Upload className="mr-2 h-4 w-4" />
+                Importar registros
+              </Button>
+            ) : null}
             {canDeleteHistory ? (
               <Button onClick={openDeleteModal} variant="destructive">
                 <Trash2 className="mr-2 h-4 w-4" />
@@ -471,6 +497,14 @@ export function ReportsClient({
                 ))}
               </Select>
             </Filter>
+            <Filter label="Comentarios">
+              <Select value={commentFilter} onChange={(event) => setCommentFilter(event.target.value as typeof commentFilter)}>
+                <option value="ALL">Todos los registros</option>
+                <option value="WITH">Solo registros con comentarios</option>
+                <option value="PENDING">Solo comentarios pendientes</option>
+                <option value="RESOLVED">Solo comentarios resueltos</option>
+              </Select>
+            </Filter>
           </div>
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
             {typeStats.map((item) => (
@@ -499,7 +533,15 @@ export function ReportsClient({
             ))}
             {onlyOvertime ? <Badge variant="warning">Fuera de horario</Badge> : null}
           </div>
-          <DataTable columns={columns} data={filtered} searchPlaceholder="Buscar en reporte maestro" />
+          <DataTable
+            columns={columns}
+            data={filtered}
+            getRowClassName={(row) => {
+              const state = getReportCommentState(row);
+              return state === "NEW" || state === "PENDING" ? "bg-red-500/10 shadow-[inset_4px_0_0_rgba(239,68,68,0.55)]" : "";
+            }}
+            searchPlaceholder="Buscar en reporte maestro"
+          />
         </CardContent>
       </Card>
       {deleteOpen ? (
@@ -616,7 +658,7 @@ function ReportCommentModal({
   isPending: boolean;
   row: ReportRow;
   onClose: () => void;
-  onResolved: (thread: TimeCommentThread) => void;
+  onResolved: (thread: TimeCommentThread | null) => void;
   onSaved: (thread: TimeCommentThread) => void;
 }) {
   const [message, setMessage] = useState("");
@@ -651,8 +693,9 @@ function ReportCommentModal({
         toast.error(result.message);
         return;
       }
-      onResolved(result.thread as TimeCommentThread);
+      onResolved(null);
       toast.success(result.message);
+      onClose();
     });
   }
 
@@ -730,6 +773,7 @@ function ImportRecordsModal({ onClose, onImported }: { onClose: () => void; onIm
   const [rows, setRows] = useState<ImportRow[]>([]);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [autoCreateMissing, setAutoCreateMissing] = useState(true);
+  const [importPin, setImportPin] = useState("");
   const [phase, setPhase] = useState<"idle" | "parsing" | "preview" | "ready" | "importing" | "done" | "error">("idle");
   const [progress, setProgress] = useState(0);
   const [summary, setSummary] = useState<{
@@ -776,7 +820,7 @@ function ImportRecordsModal({ onClose, onImported }: { onClose: () => void; onIm
     setPhase("importing");
     setProgress(82);
     startTransition(async () => {
-      const result = await importTimeEntries({ rows, fileName, autoCreateMissing });
+      const result = await importTimeEntries({ rows, fileName, autoCreateMissing, pin: importPin });
       if (!result.ok) {
         toast.error(result.message);
         if ("preview" in result && result.preview) setPreview(result.preview as ImportPreview);
@@ -930,13 +974,27 @@ function ImportRecordsModal({ onClose, onImported }: { onClose: () => void; onIm
               </p>
             </div>
           ) : null}
+          {preview && !summary ? (
+            <div className="rounded-md border bg-muted/30 p-3">
+              <Label htmlFor="import-pin">PIN de seguridad</Label>
+              <Input
+                id="import-pin"
+                className="mt-2 max-w-sm"
+                placeholder="Ingresá el PIN para importar"
+                type="password"
+                value={importPin}
+                onChange={(event) => setImportPin(event.target.value)}
+              />
+              <p className="mt-1 text-xs text-muted-foreground">Se valida en el servidor con el mismo PIN de borrado de historial.</p>
+            </div>
+          ) : null}
         </div>
 
         <footer className="flex flex-wrap justify-end gap-2 border-t p-4">
           <Button disabled={busy} variant="ghost" onClick={onClose}>
             Cerrar
           </Button>
-          <Button disabled={busy || !preview || preview.invalidRows > 0 || (needsCreation && !autoCreateMissing)} onClick={confirmImport}>
+          <Button disabled={busy || !preview || !importPin.trim() || preview.invalidRows > 0 || (needsCreation && !autoCreateMissing)} onClick={confirmImport}>
             {phase === "importing" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
             Importar registros
           </Button>
@@ -1198,4 +1256,10 @@ function isWithinLastDays(dateValue: string, days: number) {
   min.setDate(min.getDate() - days);
   min.setHours(0, 0, 0, 0);
   return date >= min;
+}
+
+function getReportCommentState(row: ReportRow) {
+  if (!row.commentThread) return "NONE";
+  if (row.commentThread.status === "RESOLVED") return "RESOLVED";
+  return row.commentThread.unread ? "NEW" : "PENDING";
 }

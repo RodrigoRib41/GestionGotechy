@@ -43,11 +43,13 @@ type FormValues = z.input<typeof projectSchema>;
 export function ProjectsClient({
   projects,
   clients,
-  projectTypes
+  projectTypes,
+  canDelete = false
 }: {
   projects: ProjectRow[];
   clients: ClientOption[];
   projectTypes: ProjectTypeOption[];
+  canDelete?: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
   const [localProjects, setLocalProjects] = useState(projects);
@@ -82,7 +84,8 @@ export function ProjectsClient({
   }, [projects]);
 
   const columns: ColumnDef<ProjectRow>[] = [
-    {
+    ...(canDelete
+      ? [{
       id: "select",
       enableSorting: false,
       header: () => (
@@ -115,7 +118,8 @@ export function ProjectsClient({
           }
         />
       )
-    },
+    } satisfies ColumnDef<ProjectRow>]
+      : []),
     {
       accessorKey: "name",
       header: "Proyecto",
@@ -178,7 +182,7 @@ export function ProjectsClient({
             <Pencil className="mr-1 h-3.5 w-3.5" />
             Editar
           </Button>
-          <Button
+          {canDelete ? <Button
             size="sm"
             variant="ghost"
             onClick={() => {
@@ -196,7 +200,7 @@ export function ProjectsClient({
             }}
           >
             Eliminar
-          </Button>
+          </Button> : null}
         </div>
       )
     }
@@ -378,11 +382,13 @@ export function ProjectsClient({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <CardTitle>Proyectos</CardTitle>
             <div className="flex flex-wrap items-center gap-2">
-              {selectedProjectIds.size ? <Badge variant="warning">{selectedProjectIds.size} seleccionados</Badge> : null}
-              <Button disabled={isPending || !selectedProjectIds.size} size="sm" variant="destructive" onClick={deleteSelectedProjects}>
-                <Trash2 className="mr-2 h-3.5 w-3.5" />
-                Eliminar seleccionados
-              </Button>
+              {canDelete && selectedProjectIds.size ? <Badge variant="warning">{selectedProjectIds.size} seleccionados</Badge> : null}
+              {canDelete ? (
+                <Button disabled={isPending || !selectedProjectIds.size} size="sm" variant="destructive" onClick={deleteSelectedProjects}>
+                  <Trash2 className="mr-2 h-3.5 w-3.5" />
+                  Eliminar seleccionados
+                </Button>
+              ) : null}
               <Button disabled={isPending} size="sm" variant="outline" onClick={refreshData}>
                 <RefreshCw className="mr-2 h-3.5 w-3.5" />
                 Actualizar

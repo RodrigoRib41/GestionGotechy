@@ -34,7 +34,7 @@ type ClientRow = {
 
 type FormValues = z.input<typeof clientSchema>;
 
-export function ClientsClient({ clients }: { clients: ClientRow[] }) {
+export function ClientsClient({ clients, canDelete = false }: { clients: ClientRow[]; canDelete?: boolean }) {
   const [isPending, startTransition] = useTransition();
   const [localClients, setLocalClients] = useState(clients);
   const [selectedClientIds, setSelectedClientIds] = useState<Set<string>>(() => new Set());
@@ -51,7 +51,8 @@ export function ClientsClient({ clients }: { clients: ClientRow[] }) {
   }, [clients]);
 
   const columns: ColumnDef<ClientRow>[] = [
-    {
+    ...(canDelete
+      ? [{
       id: "select",
       enableSorting: false,
       header: () => (
@@ -84,7 +85,8 @@ export function ClientsClient({ clients }: { clients: ClientRow[] }) {
           }
         />
       )
-    },
+    } satisfies ColumnDef<ClientRow>]
+      : []),
     {
       accessorKey: "name",
       header: "Cliente",
@@ -115,7 +117,7 @@ export function ClientsClient({ clients }: { clients: ClientRow[] }) {
             <Pencil className="mr-1 h-3.5 w-3.5" />
             Editar
           </Button>
-          <Button
+          {canDelete ? <Button
             size="sm"
             variant="ghost"
             onClick={() => {
@@ -135,7 +137,7 @@ export function ClientsClient({ clients }: { clients: ClientRow[] }) {
             }}
           >
             Eliminar
-          </Button>
+          </Button> : null}
         </div>
       )
     }
@@ -270,11 +272,13 @@ export function ClientsClient({ clients }: { clients: ClientRow[] }) {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <CardTitle>Clientes</CardTitle>
             <div className="flex flex-wrap items-center gap-2">
-              {selectedClientIds.size ? <Badge variant="warning">{selectedClientIds.size} seleccionados</Badge> : null}
-              <Button disabled={isPending || !selectedClientIds.size} size="sm" variant="destructive" onClick={deleteSelectedClients}>
-                <Trash2 className="mr-2 h-3.5 w-3.5" />
-                Eliminar seleccionados
-              </Button>
+              {canDelete && selectedClientIds.size ? <Badge variant="warning">{selectedClientIds.size} seleccionados</Badge> : null}
+              {canDelete ? (
+                <Button disabled={isPending || !selectedClientIds.size} size="sm" variant="destructive" onClick={deleteSelectedClients}>
+                  <Trash2 className="mr-2 h-3.5 w-3.5" />
+                  Eliminar seleccionados
+                </Button>
+              ) : null}
               <Button disabled={isPending} size="sm" variant="outline" onClick={refreshData}>
                 <RefreshCw className="mr-2 h-3.5 w-3.5" />
                 Actualizar

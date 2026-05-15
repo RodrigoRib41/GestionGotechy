@@ -5,11 +5,11 @@ const publicRoutes = ["/login", "/access-denied"];
 const protectedRoutes: Array<{ prefix: string; allowedRoles: string[] }> = [
   { prefix: "/api/admin", allowedRoles: ["SUPERADMIN"] },
   { prefix: "/admin", allowedRoles: ["SUPERADMIN"] },
-  { prefix: "/team", allowedRoles: ["SUPERADMIN"] },
+  { prefix: "/team", allowedRoles: ["SUPERADMIN", "ADMINISTRADOR"] },
   { prefix: "/reports", allowedRoles: ["SUPERADMIN", "ADMINISTRADOR"] },
   { prefix: "/projects", allowedRoles: ["SUPERADMIN", "ADMINISTRADOR"] },
   { prefix: "/clients", allowedRoles: ["SUPERADMIN", "ADMINISTRADOR"] },
-  { prefix: "/tracking", allowedRoles: ["SUPERADMIN", "ADMINISTRADOR"] },
+  { prefix: "/tracking", allowedRoles: ["SUPERADMIN", "ADMINISTRADOR", "COLABORADOR"] },
   { prefix: "/objectives", allowedRoles: ["SUPERADMIN", "ADMINISTRADOR"] },
   { prefix: "/time", allowedRoles: ["SUPERADMIN", "ADMINISTRADOR", "COLABORADOR"] }
 ];

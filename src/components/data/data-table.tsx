@@ -20,10 +20,12 @@ import { BrandMark } from "@/components/brand/brand-mark";
 function DataTableInner<TData, TValue>({
   columns,
   data,
+  getRowClassName,
   searchPlaceholder = "Buscar"
 }: {
   columns: ColumnDef<TData, TValue>[];
   data: TData[];
+  getRowClassName?: (row: TData) => string;
   searchPlaceholder?: string;
 }) {
   const [sorting, setSorting] = useState<SortingState>([]);
@@ -81,7 +83,7 @@ function DataTableInner<TData, TValue>({
             <tbody>
               {table.getRowModel().rows.length ? (
                 table.getRowModel().rows.map((row) => (
-                  <tr key={row.id} className="border-t transition-colors hover:bg-muted/40">
+                  <tr key={row.id} className={`border-t transition-colors hover:bg-muted/40 ${getRowClassName?.(row.original) ?? ""}`}>
                     {row.getVisibleCells().map((cell) => (
                       <td key={cell.id} className="px-4 py-3 align-middle">
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}

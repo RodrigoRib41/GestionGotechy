@@ -21,26 +21,27 @@ import {
   X
 } from "lucide-react";
 import { useTheme } from "next-themes";
-import { ReactNode, useMemo, useState } from "react";
+import { ReactNode, useCallback, useMemo, useState, useTransition } from "react";
 
 import { signOutAction } from "@/lib/actions/auth-actions";
-import { markAllNotificationsRead, markNotificationRead } from "@/lib/actions/notification-actions";
+import { loadNotificationSnapshot, markAllNotificationsRead, markNotificationRead } from "@/lib/actions/notification-actions";
 import { cn, initials } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { GlobalSearch } from "@/components/navigation/global-search";
 import { ThemeVariantSelector } from "@/components/navigation/theme-variant-selector";
 import { BrandMark } from "@/components/brand/brand-mark";
+import { RealtimeProvider, useRealtimeEvent } from "@/components/realtime/realtime-provider";
 
 const navItems: Array<{ href: string; label: string; icon: typeof Gauge; allowedRoles: Role[] }> = [
-  { href: "/", label: "Dashboard", icon: Gauge, allowedRoles: ["ADMINISTRADOR", "SUPERADMIN"] },
+  { href: "/", label: "Dashboard", icon: Gauge, allowedRoles: ["COLABORADOR", "ADMINISTRADOR", "SUPERADMIN"] },
   { href: "/time", label: "Carga de horas", icon: Clock3, allowedRoles: ["COLABORADOR", "ADMINISTRADOR", "SUPERADMIN"] },
-  { href: "/tracking", label: "Seguimiento", icon: ClipboardList, allowedRoles: ["ADMINISTRADOR", "SUPERADMIN"] },
+  { href: "/tracking", label: "Seguimiento", icon: ClipboardList, allowedRoles: ["COLABORADOR", "ADMINISTRADOR", "SUPERADMIN"] },
   { href: "/objectives", label: "Objetivos", icon: Goal, allowedRoles: ["ADMINISTRADOR", "SUPERADMIN"] },
   { href: "/projects", label: "Proyectos", icon: BriefcaseBusiness, allowedRoles: ["ADMINISTRADOR", "SUPERADMIN"] },
   { href: "/clients", label: "Clientes", icon: Building2, allowedRoles: ["ADMINISTRADOR", "SUPERADMIN"] },
   { href: "/reports", label: "Reportes", icon: Download, allowedRoles: ["ADMINISTRADOR", "SUPERADMIN"] },
-  { href: "/team", label: "Colaboradores", icon: UsersRound, allowedRoles: ["SUPERADMIN"] },
+  { href: "/team", label: "Colaboradores", icon: UsersRound, allowedRoles: ["ADMINISTRADOR", "SUPERADMIN"] },
   { href: "/admin", label: "Administración", icon: Shield, allowedRoles: ["SUPERADMIN"] }
 ];
 
@@ -83,6 +84,7 @@ export function AppShell({
   const [open, setOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationState, setNotificationState] = useState(notifications);
+  const [, startNotificationTransition] = useTransition();
   const { theme, setTheme } = useTheme();
   const visibleItems = useMemo(
     () =>
@@ -93,8 +95,24 @@ export function AppShell({
     [hasTrackingAccess, user.role]
   );
   const title = titles[pathname] ?? "Gotechy Consulting";
+  const refreshNotifications = useCallback(() => {
+    startNotificationTransition(async () => {
+      const snapshot = await loadNotificationSnapshot();
+      setNotificationState(snapshot);
+    });
+  }, []);
+
+  useRealtimeEvent(
+    useCallback(
+      (message) => {
+        if (message.type === "NOTIFICATION" || message.type === "TIME_ENTRY_COMMENT") refreshNotifications();
+      },
+      [refreshNotifications]
+    )
+  );
 
   return (
+    <RealtimeProvider>
     <div className="min-h-screen bg-background">
       <aside
         className={cn(
@@ -260,6 +278,7 @@ export function AppShell({
         </main>
       </div>
     </div>
+    </RealtimeProvider>
   );
 }
 

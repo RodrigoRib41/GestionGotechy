@@ -54,12 +54,24 @@ export function canManageResources(session: Session | null | undefined) {
   return hasRole(session, [Role.ADMINISTRADOR]);
 }
 
+export function canDeleteResources(session: Session | null | undefined) {
+  return hasRole(session, [Role.SUPERADMIN]);
+}
+
 export function canViewGlobalReports(session: Session | null | undefined) {
   return hasRole(session, [Role.ADMINISTRADOR]);
 }
 
+export function canImportTimeHistory(session: Session | null | undefined) {
+  return hasRole(session, [Role.SUPERADMIN]);
+}
+
 export function canManageTracking(session: Session | null | undefined) {
   return hasRole(session, [Role.ADMINISTRADOR]);
+}
+
+export function canDeleteTracking(session: Session | null | undefined) {
+  return hasRole(session, [Role.SUPERADMIN]);
 }
 
 export function canExportTracking(session: Session | null | undefined) {
@@ -67,7 +79,7 @@ export function canExportTracking(session: Session | null | undefined) {
 }
 
 export function canViewTracking(session: Session | null | undefined) {
-  return hasRole(session, [Role.ADMINISTRADOR]);
+  return hasRole(session, [Role.COLABORADOR, Role.ADMINISTRADOR]);
 }
 
 export function canViewObjectives(session: Session | null | undefined) {

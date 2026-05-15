@@ -19,9 +19,9 @@ import {
   TimerReset,
   Trash2
 } from "lucide-react";
-import { useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import type { ReactNode } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 
 import {
@@ -31,12 +31,15 @@ import {
   bulkUpdateTrackingTasks,
   changeTrackingTaskStatus,
   createTrackingTask,
+  deleteTrackingComment,
   deleteTrackingTask,
   deleteTrackingStatus,
+  loadTrackingSnapshot,
   logTrackingExport,
   logTrackingTaskTime,
   patchTrackingTask,
   restoreTrackingTask,
+  updateTrackingComment,
   upsertTrackingStatus
 } from "@/lib/actions/tracking-actions";
 import { cn, formatMinutes } from "@/lib/utils";
@@ -47,6 +50,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { useRealtimeEvent } from "@/components/realtime/realtime-provider";
 
 type TrackingData = Awaited<ReturnType<typeof import("@/lib/data/tracking").getTrackingData>>;
 type ViewMode = "kanban" | "list" | "timeline" | "dashboard" | "states";
@@ -87,6 +91,7 @@ type TrackingHistory = {
   minutes: number | null;
   createdAt: string;
   actor: string;
+  actorId: string | null;
 };
 
 const filterKey = "gotechy:tracking-filters";
@@ -107,6 +112,10 @@ const priorityVariants: Record<Priority, "muted" | "outline" | "warning" | "dest
 export function TrackingClient({ data }: { data: TrackingData }) {
   const [tasks, setTasks] = useState<TrackingTask[]>(data.tasks as TrackingTask[]);
   const [history, setHistory] = useState<TrackingHistory[]>(data.history as TrackingHistory[]);
+  const [statuses, setStatuses] = useState(data.statuses);
+  const [clients, setClients] = useState(data.clients);
+  const [projects, setProjects] = useState(data.projects);
+  const [users, setUsers] = useState(data.users);
   const [view, setView] = useState<ViewMode>("kanban");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(() => new Set());
@@ -126,10 +135,12 @@ export function TrackingClient({ data }: { data: TrackingData }) {
   const deferredQuery = useDeferredValue(filters.q.trim().toLowerCase());
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
-  const activeStatuses = useMemo(() => data.statuses.filter((status) => status.active).sort((a, b) => a.sortOrder - b.sortOrder), [data.statuses]);
+  const searchParams = useSearchParams();
+  const realtimeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeStatuses = useMemo(() => statuses.filter((status) => status.active).sort((a, b) => a.sortOrder - b.sortOrder), [statuses]);
   const visibleProjects = useMemo(
-    () => data.projects.filter((project) => filters.clientId === "ALL" || project.clientId === filters.clientId),
-    [data.projects, filters.clientId]
+    () => projects.filter((project) => filters.clientId === "ALL" || project.clientId === filters.clientId),
+    [projects, filters.clientId]
   );
   const filteredTasks = useMemo(() => {
     return tasks.filter((task) => {
@@ -163,6 +174,45 @@ export function TrackingClient({ data }: { data: TrackingData }) {
   const filteredHistory = useMemo(() => history.filter((item) => historyTaskIds.has(item.taskId)), [history, historyTaskIds]);
   const dashboard = useMemo(() => buildDashboard(filteredTasks, activeStatuses), [activeStatuses, filteredTasks]);
 
+  const refreshTrackingSnapshot = useCallback(() => {
+    if (realtimeTimerRef.current) clearTimeout(realtimeTimerRef.current);
+    realtimeTimerRef.current = setTimeout(() => {
+      startTransition(async () => {
+        const snapshot = await loadTrackingSnapshot();
+        setTasks(snapshot.tasks as TrackingTask[]);
+        setHistory(snapshot.history as TrackingHistory[]);
+        setStatuses(snapshot.statuses);
+        setClients(snapshot.clients);
+        setProjects(snapshot.projects);
+        setUsers(snapshot.users);
+      });
+    }, 250);
+  }, []);
+
+  useRealtimeEvent(
+    useCallback(
+      (message) => {
+        if (message.type === "TRACKING") refreshTrackingSnapshot();
+      },
+      [refreshTrackingSnapshot]
+    )
+  );
+
+  useEffect(() => {
+    setTasks(data.tasks as TrackingTask[]);
+    setHistory(data.history as TrackingHistory[]);
+    setStatuses(data.statuses);
+    setClients(data.clients);
+    setProjects(data.projects);
+    setUsers(data.users);
+  }, [data]);
+
+  useEffect(() => {
+    return () => {
+      if (realtimeTimerRef.current) clearTimeout(realtimeTimerRef.current);
+    };
+  }, []);
+
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(filterKey);
@@ -191,6 +241,11 @@ export function TrackingClient({ data }: { data: TrackingData }) {
     });
   }, [filteredTasks]);
 
+  useEffect(() => {
+    const taskId = searchParams.get("task");
+    if (taskId && tasks.some((task) => task.id === taskId)) setSelectedTaskId(taskId);
+  }, [searchParams, tasks]);
+
   function updateFilter(key: keyof typeof filters, value: string) {
     setFilters((current) => {
       const next = { ...current, [key]: value };
@@ -202,6 +257,10 @@ export function TrackingClient({ data }: { data: TrackingData }) {
   function moveTask(taskId: string, status: TrackingStatus) {
     const task = tasks.find((item) => item.id === taskId);
     if (!task || task.status.id === status.id) return;
+    if (!data.permissions.canManage && task.assignee.id !== data.permissions.userId) {
+      toast.error("Solo podés cambiar el estado de tus tareas asignadas");
+      return;
+    }
 
     const previousTasks = tasks;
     setTasks((current) =>
@@ -224,7 +283,8 @@ export function TrackingClient({ data }: { data: TrackingData }) {
         message: `Estado: ${task.status.name} -> ${status.name}`,
         minutes: null,
         createdAt: new Date().toISOString(),
-        actor: "Vos"
+        actor: "Vos",
+        actorId: data.permissions.userId
       },
       ...current
     ]);
@@ -373,33 +433,32 @@ export function TrackingClient({ data }: { data: TrackingData }) {
       <TrackingHeader
         canExport={data.permissions.canExport}
         canManage={data.permissions.canManage}
-        isPending={isPending}
         onExportCsv={exportCsv}
         onExportExcel={exportExcel}
         onExportPdf={exportPdf}
-        onRefresh={() => router.refresh()}
       />
 
       <TrackingFilters
-        clients={data.clients}
+        clients={clients}
         filters={filters}
         projects={visibleProjects}
-        statuses={data.statuses}
-        users={data.users}
+        statuses={statuses}
+        users={users}
         onChange={updateFilter}
       />
 
       {data.permissions.canManage ? (
-        <TaskCreator clients={data.clients} projects={data.projects} statuses={activeStatuses} users={data.users} onCreated={() => router.refresh()} />
+        <TaskCreator clients={clients} projects={projects} statuses={activeStatuses} users={users} onCreated={refreshTrackingSnapshot} />
       ) : null}
 
       {data.permissions.canManage ? (
         <BulkTaskActions
-          assignees={data.users}
+          assignees={users}
           draft={bulkDraft}
           isPending={isPending}
           selectedCount={selectedTaskIds.size}
           statuses={activeStatuses}
+          canDelete={data.permissions.canDelete}
           onApply={applyBulkUpdate}
           onDelete={deleteSelectedTasks}
           onDraftChange={(key, value) => setBulkDraft((current) => ({ ...current, [key]: value }))}
@@ -464,7 +523,7 @@ export function TrackingClient({ data }: { data: TrackingData }) {
 
       {view === "dashboard" ? <TrackingDashboard dashboard={dashboard} /> : null}
 
-      {view === "states" && data.permissions.canManage ? <StatusManager statuses={data.statuses} onSaved={() => router.refresh()} /> : null}
+      {view === "states" && data.permissions.canManage ? <StatusManager statuses={statuses} onSaved={refreshTrackingSnapshot} /> : null}
 
       {view === "list" && visibleCount < filteredTasks.length ? (
         <div className="text-center">
@@ -477,10 +536,15 @@ export function TrackingClient({ data }: { data: TrackingData }) {
       {selectedTask ? (
         <TaskDetailPanel
           canManage={data.permissions.canManage}
-          clients={data.clients}
+          canDelete={data.permissions.canDelete}
+          canTouch={data.permissions.canManage || selectedTask.assignee.id === data.permissions.userId}
+          clients={clients}
+          currentUserId={data.permissions.userId}
           history={history.filter((item) => item.taskId === selectedTask.id)}
           onClose={() => setSelectedTaskId(null)}
           onComment={(item) => setHistory((current) => [item, ...current])}
+          onHistoryItemDeleted={(historyId) => setHistory((current) => current.filter((entry) => entry.id !== historyId))}
+          onHistoryItemUpdated={(item) => setHistory((current) => current.map((entry) => (entry.id === item.id ? item : entry)))}
           onLifecycleChanged={(taskId, lifecycle) => {
             setTasks((current) =>
               current.map((task) =>
@@ -501,10 +565,10 @@ export function TrackingClient({ data }: { data: TrackingData }) {
             setTasks((current) => current.map((task) => (task.id === selectedTask.id ? { ...task, consumedMinutes: task.consumedMinutes + minutes } : task)));
             setHistory((current) => [item, ...current]);
           }}
-          projects={data.projects}
+          projects={projects}
           statuses={activeStatuses}
           task={selectedTask}
-          users={data.users}
+          users={users}
         />
       ) : null}
     </div>
@@ -514,19 +578,15 @@ export function TrackingClient({ data }: { data: TrackingData }) {
 function TrackingHeader({
   canExport,
   canManage,
-  isPending,
   onExportCsv,
   onExportExcel,
-  onExportPdf,
-  onRefresh
+  onExportPdf
 }: {
   canExport: boolean;
   canManage: boolean;
-  isPending: boolean;
   onExportCsv: () => void;
   onExportExcel: () => void;
   onExportPdf: () => void;
-  onRefresh: () => void;
 }) {
   return (
     <section className="flex flex-col gap-3 rounded-lg border bg-card p-3 shadow-sm lg:flex-row lg:items-center lg:justify-between">
@@ -537,10 +597,6 @@ function TrackingHeader({
         </p>
       </div>
       <div className="flex flex-wrap gap-2">
-        <Button className="h-8" size="sm" variant="outline" onClick={onRefresh}>
-          <RotateCcw className="mr-2 h-3.5 w-3.5" />
-          {isPending ? "Actualizando" : "Actualizar"}
-        </Button>
         {canExport ? (
           <>
             <Button className="h-8" size="sm" variant="outline" onClick={onExportCsv}>
@@ -640,6 +696,7 @@ function BulkTaskActions({
   isPending,
   selectedCount,
   statuses,
+  canDelete,
   onApply,
   onClear,
   onDelete,
@@ -651,6 +708,7 @@ function BulkTaskActions({
   isPending: boolean;
   selectedCount: number;
   statuses: TrackingStatus[];
+  canDelete: boolean;
   onApply: () => void;
   onClear: () => void;
   onDelete: () => void;
@@ -704,10 +762,12 @@ function BulkTaskActions({
         <Button className="h-9" disabled={isPending || !selectedCount || !hasChange} type="button" onClick={onApply}>
           Aplicar
         </Button>
-        <Button className="h-9" disabled={isPending || !selectedCount} type="button" variant="destructive" onClick={onDelete}>
-          <Trash2 className="mr-2 h-4 w-4" />
-          Eliminar
-        </Button>
+        {canDelete ? (
+          <Button className="h-9" disabled={isPending || !selectedCount} type="button" variant="destructive" onClick={onDelete}>
+            <Trash2 className="mr-2 h-4 w-4" />
+            Eliminar
+          </Button>
+        ) : null}
       </div>
     </section>
   );
@@ -1243,8 +1303,13 @@ function TaskDetailPanel({
   statuses,
   history,
   canManage,
+  canDelete,
+  canTouch,
+  currentUserId,
   onClose,
   onComment,
+  onHistoryItemDeleted,
+  onHistoryItemUpdated,
   onLifecycleChanged,
   onTimeLogged,
   onPatched
@@ -1256,8 +1321,13 @@ function TaskDetailPanel({
   statuses: TrackingStatus[];
   history: TrackingHistory[];
   canManage: boolean;
+  canDelete: boolean;
+  canTouch: boolean;
+  currentUserId: string;
   onClose: () => void;
   onComment: (item: TrackingHistory) => void;
+  onHistoryItemDeleted: (historyId: string) => void;
+  onHistoryItemUpdated: (item: TrackingHistory) => void;
   onLifecycleChanged: (taskId: string, lifecycle: "ACTIVE" | "ARCHIVED" | "DELETED") => void;
   onTimeLogged: (minutes: number, item: TrackingHistory) => void;
   onPatched: () => void;
@@ -1265,6 +1335,8 @@ function TaskDetailPanel({
   const [comment, setComment] = useState("");
   const [time, setTime] = useState("30");
   const [timeNote, setTimeNote] = useState("");
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editingComment, setEditingComment] = useState("");
   const [draft, setDraft] = useState({
     title: task.title,
     description: task.description,
@@ -1282,7 +1354,9 @@ function TaskDetailPanel({
   const autosaveSignatureRef = useRef(JSON.stringify(draft));
   const [isPending, startTransition] = useTransition();
   const availableProjects = projects.filter((project) => project.clientId === draft.clientId);
-  const conversationHistory = history.filter((item) => item.action === "COMMENT" || item.action === "TIME_LOGGED");
+  const conversationHistory = history
+    .filter((item) => item.action === "COMMENT" || item.action === "TIME_LOGGED")
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 
   useEffect(() => {
     if (!canManage || task.deletedAt) return;
@@ -1316,7 +1390,8 @@ function TaskDetailPanel({
           message: comment,
           minutes: null,
           createdAt: new Date().toISOString(),
-          actor: "Vos"
+          actor: "Vos",
+          actorId: currentUserId
         });
         setComment("");
         toast.success(result.message);
@@ -1338,9 +1413,51 @@ function TaskDetailPanel({
           message: timeNote || `Tiempo imputado: ${minutes}m`,
           minutes,
           createdAt: new Date().toISOString(),
-          actor: "Vos"
+          actor: "Vos",
+          actorId: currentUserId
         });
         setTimeNote("");
+        toast.success(result.message);
+      } else {
+        toast.error(result.message);
+      }
+    });
+  }
+
+  function beginEditComment(item: TrackingHistory) {
+    setEditingCommentId(item.id);
+    setEditingComment(item.message ?? "");
+  }
+
+  function cancelEditComment() {
+    setEditingCommentId(null);
+    setEditingComment("");
+  }
+
+  function saveCommentEdit(item: TrackingHistory) {
+    const nextMessage = editingComment.trim();
+    if (!nextMessage) return;
+
+    startTransition(async () => {
+      const result = await updateTrackingComment({ historyId: item.id, message: nextMessage });
+      if (result.ok && "history" in result) {
+        onHistoryItemUpdated(result.history as TrackingHistory);
+        cancelEditComment();
+        toast.success(result.message);
+      } else {
+        toast.error(result.message);
+      }
+    });
+  }
+
+  function removeComment(item: TrackingHistory) {
+    if (!window.confirm("Eliminar este comentario del historial de la tarea?")) return;
+
+    startTransition(async () => {
+      const result = await deleteTrackingComment({ historyId: item.id });
+      if (result.ok) {
+        if (editingCommentId === item.id) cancelEditComment();
+        onHistoryItemDeleted(item.id);
         toast.success(result.message);
       } else {
         toast.error(result.message);
@@ -1391,7 +1508,7 @@ function TaskDetailPanel({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/35" onClick={onClose}>
-      <aside className="ml-auto h-full w-full max-w-2xl overflow-y-auto bg-background p-4 shadow-xl" onClick={(event) => event.stopPropagation()}>
+      <aside className="ml-auto h-full w-full max-w-6xl overflow-y-auto bg-background p-4 shadow-xl" onClick={(event) => event.stopPropagation()}>
         <div className="flex items-start justify-between gap-3">
           <div>
             <h3 className="text-lg font-semibold">{task.title}</h3>
@@ -1409,8 +1526,11 @@ function TaskDetailPanel({
           <LifecycleBadge task={task} />
           {task.dueDate ? <Badge variant={getTaskFlags(task).overdue ? "destructive" : "outline"}>Vence {formatDate(task.dueDate)}</Badge> : null}
         </div>
-        <p className="mt-4 rounded-md border bg-card p-3 text-sm">{task.description}</p>
+        <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+          <div className="min-w-0 space-y-4">
+            <p className="rounded-md border bg-card p-3 text-sm">{task.description}</p>
 
+        {canTouch ? (
         <section className="mt-4 grid gap-3 sm:grid-cols-2">
           <Card>
             <CardHeader className="p-3 pb-0"><CardTitle className="text-sm">Comentario interno</CardTitle></CardHeader>
@@ -1434,6 +1554,7 @@ function TaskDetailPanel({
             </CardContent>
           </Card>
         </section>
+        ) : null}
 
         {canManage ? (
           <Card className="mt-4">
@@ -1480,7 +1601,7 @@ function TaskDetailPanel({
                     Archivar
                   </Button>
                 )}
-                {!task.deletedAt ? (
+                {canDelete && !task.deletedAt ? (
                   <Button disabled={isPending} size="sm" variant="destructive" onClick={() => changeLifecycle("DELETE")}>
                     <Trash2 className="mr-2 h-4 w-4" />
                     Eliminar
@@ -1490,33 +1611,92 @@ function TaskDetailPanel({
             </CardContent>
           </Card>
         ) : null}
+          </div>
 
-        <Card className="mt-4">
-          <CardHeader className="flex-row items-center justify-between p-3 pb-0">
-            <CardTitle className="text-sm">Conversacion historica</CardTitle>
-            <Button className="h-8" size="sm" variant="ghost" onClick={() => setHistoryOpen((value) => !value)}>
-              {historyOpen ? "Minimizar" : "Expandir"}
-            </Button>
-          </CardHeader>
-          {historyOpen ? (
-            <CardContent className="space-y-2 p-3">
-              {conversationHistory.length ? (
-                conversationHistory.map((item) => (
-                  <div key={item.id} className="rounded-md border p-2 text-xs">
-                    <div className="flex justify-between gap-2">
-                      <span className="font-medium">{item.actor}</span>
-                      <span className="text-muted-foreground">{new Date(item.createdAt).toLocaleString("es-AR")}</span>
-                    </div>
-                    {item.message ? <div className="mt-2 whitespace-pre-wrap">{item.message}</div> : null}
-                    {item.minutes ? <div className="mt-1 text-muted-foreground">{formatMinutes(item.minutes)}</div> : null}
-                  </div>
-                ))
-              ) : (
-                <div className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">Sin comentarios todavia.</div>
-              )}
-            </CardContent>
-          ) : null}
-        </Card>
+          <Card className="min-h-[420px] overflow-hidden xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)]">
+            <CardHeader className="flex-row items-center justify-between border-b p-3">
+              <div className="flex items-center gap-2">
+                <CardTitle className="text-sm">Conversacion historica</CardTitle>
+                <Badge variant="muted">{conversationHistory.length}</Badge>
+              </div>
+              <Button className="h-8" size="sm" variant="ghost" onClick={() => setHistoryOpen((value) => !value)}>
+                {historyOpen ? "Minimizar" : "Expandir"}
+              </Button>
+            </CardHeader>
+            {historyOpen ? (
+              <CardContent className="space-y-2 p-3">
+                <div className="max-h-[calc(100vh-170px)] space-y-2 overflow-y-auto pr-1">
+                  {conversationHistory.length ? (
+                    conversationHistory.map((item) => {
+                      const isComment = item.action === "COMMENT";
+                      const isOwnComment = isComment && item.actorId === currentUserId;
+                      const canEditComment = item.action === "COMMENT" && item.actorId === currentUserId && !item.id.startsWith("local-");
+                      const canRemoveComment = item.action === "COMMENT" && (item.actorId === currentUserId || canManage) && !item.id.startsWith("local-");
+                      const isEditing = editingCommentId === item.id;
+
+                      return (
+                        <div
+                          key={item.id}
+                          className={cn(
+                            "rounded-md border p-3 text-xs shadow-sm",
+                            isOwnComment && "border-emerald-300 bg-emerald-50/80 dark:border-emerald-900/70 dark:bg-emerald-950/30",
+                            isComment && !isOwnComment && "border-sky-300 bg-sky-50/80 dark:border-sky-900/70 dark:bg-sky-950/30",
+                            !isComment && "bg-background"
+                          )}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <div className="font-medium">{item.actor}</div>
+                              <div className="mt-0.5 text-muted-foreground">{new Date(item.createdAt).toLocaleString("es-AR")}</div>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-1">
+                              <Badge variant={item.action === "COMMENT" ? "outline" : "muted"}>{item.action === "COMMENT" ? "Comentario" : "Tiempo"}</Badge>
+                              {isComment ? <Badge variant={isOwnComment ? "success" : "muted"}>{isOwnComment ? "Vos" : "Otro usuario"}</Badge> : null}
+                              {canEditComment && !isEditing ? (
+                                <Button className="h-7 px-2 text-xs" size="sm" variant="ghost" onClick={() => beginEditComment(item)}>
+                                  Editar
+                                </Button>
+                              ) : null}
+                              {canRemoveComment && !isEditing ? (
+                                <Button className="h-7 px-2 text-xs" size="sm" variant="ghost" onClick={() => removeComment(item)}>
+                                  Eliminar
+                                </Button>
+                              ) : null}
+                            </div>
+                          </div>
+
+                          {isEditing ? (
+                            <div className="mt-3 space-y-2">
+                              <Textarea className="min-h-[92px]" value={editingComment} onChange={(event) => setEditingComment(event.target.value)} />
+                              <div className="flex justify-end gap-2">
+                                <Button className="h-8" size="sm" variant="ghost" onClick={cancelEditComment}>
+                                  Cancelar
+                                </Button>
+                                <Button className="h-8" size="sm" disabled={isPending || !editingComment.trim()} onClick={() => saveCommentEdit(item)}>
+                                  <Save className="mr-2 h-3.5 w-3.5" />
+                                  Guardar
+                                </Button>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              {item.message ? <div className="mt-2 whitespace-pre-wrap leading-relaxed">{item.message}</div> : null}
+                              {item.minutes ? <div className="mt-2 text-muted-foreground">{formatMinutes(item.minutes)}</div> : null}
+                            </>
+                          )}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">Sin comentarios todavia.</div>
+                  )}
+                </div>
+              </CardContent>
+            ) : (
+              <CardContent className="p-3 text-sm text-muted-foreground">Historial minimizado.</CardContent>
+            )}
+          </Card>
+        </div>
       </aside>
     </div>
   );
